@@ -38,6 +38,7 @@ from ._search import (
 from ._solution import RESULTS as RESULTS, Solution as Solution
 from ._solver import (
     AbstractBFGS as AbstractBFGS,
+    AbstractNewtonMinimiser as AbstractNewtonMinimiser,
     AbstractDFP as AbstractDFP,
     AbstractGaussNewton as AbstractGaussNewton,
     AbstractGradientDescent as AbstractGradientDescent,
@@ -69,6 +70,7 @@ from ._solver import (
     LearningRate as LearningRate,
     LevenbergMarquardt as LevenbergMarquardt,
     LinearTrustRegion as LinearTrustRegion,
+    LineSearchNewton as LineSearchNewton,
     NelderMead as NelderMead,
     Newton as Newton,
     NewtonDescent as NewtonDescent,
@@ -77,6 +79,8 @@ from ._solver import (
     OptaxMinimiser as OptaxMinimiser,
     polak_ribiere as polak_ribiere,
     SteepestDescent as SteepestDescent,
+    SteihaugCGDescent as SteihaugCGDescent,
+    TrustNewton as TrustNewton,
 )
 
 

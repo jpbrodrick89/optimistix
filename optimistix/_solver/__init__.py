@@ -45,6 +45,12 @@ from .quasi_newton import (
     BFGS as BFGS,
     DFP as DFP,
 )
+from .second_order import (
+    AbstractNewtonMinimiser as AbstractNewtonMinimiser,
+    LineSearchNewton as LineSearchNewton,
+    SteihaugCGDescent as SteihaugCGDescent,
+    TrustNewton as TrustNewton,
+)
 from .trust_region import (
     ClassicalTrustRegion as ClassicalTrustRegion,
     LinearTrustRegion as LinearTrustRegion,
