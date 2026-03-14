@@ -6,21 +6,27 @@ This module provides:
 - [`optimistix.LineSearchNewton`][]: Newton with Armijo line-search globalisation.
 - [`optimistix.TrustNewton`][]: Newton with classical trust-region globalisation.
 
-These differ from quasi-Newton methods (BFGS, L-BFGS) in that they compute the
-**exact** Hessian via JAX automatic differentiation at each accepted step. This
-makes them more expensive per step (O(n²) Hessian materialisation) but can give
-faster convergence on problems where the exact Hessian is informative.
+These differ from quasi-Newton methods (BFGS, L-BFGS) in that they evaluate the
+**exact** Hessian via JAX automatic differentiation at each accepted step, using
+a [`lineax.JacobianLinearOperator`][] over `jax.grad(f)` tagged as symmetric.
+This means the Hessian is never materialised: it is a lazy operator that computes
+Hessian-vector products via forward-over-reverse AD on demand.
+
+Solvers such as [`optimistix.NewtonDescent`][] will materialise the operator if
+their linear solver requires a dense matrix (e.g. `lineax.Cholesky()`), while
+[`optimistix.SteihaugCGDescent`][] uses Hessian-vector products directly and
+never needs the full matrix.
 
 For large-scale problems consider [`optimistix.BFGS`][] or [`optimistix.LBFGS`][].
 
 ### Comparison with the quasi-Newton solvers in optimistix
 
-| Attribute          | BFGS / L-BFGS              | LineSearchNewton / TrustNewton      |
-|--------------------|---------------------------|-------------------------------------|
-| Hessian            | Approximate (rank-2 update) | Exact (JAX `hessian`)              |
-| Cost per step      | O(n) or O(mn)             | O(n²) Hessian + O(n³) solve        |
-| Non-convex support | Limited (requires PD approx) | TrustNewton + SteihaugCGDescent  |
-| Good for           | Large-scale problems       | Small/medium, accurate solutions   |
+| Attribute          | BFGS / L-BFGS                | LineSearchNewton / TrustNewton         |
+|--------------------|------------------------------|----------------------------------------|
+| Hessian            | Approximate (rank-2 update)  | Exact (JacobianLinearOperator)        |
+| Cost per HVP       | O(n)                         | O(cost of one grad eval)              |
+| Non-convex support | Limited (requires PD approx) | TrustNewton + SteihaugCGDescent       |
+| Good for           | Large-scale problems         | Small/medium, accurate solutions      |
 """
 
 from collections.abc import Callable
@@ -57,32 +63,37 @@ from .trust_region import ClassicalTrustRegion
 
 
 # ---------------------------------------------------------------------------
-# Private helper: build a PyTreeLinearOperator identity for a given pytree y.
-# Needed to initialise f_info in AbstractNewtonMinimiser.init() with the
-# correct static structure so that filter_cond sees matching pytree shapes in
-# both the accepted and rejected branches.
+# Helper: build the initial f_info structure with a JacobianLinearOperator
+# hessian, following the same pattern as _make_f_info in gauss_newton.py.
+# Called inside eqx.filter_eval_shape so only structure (not values) matters.
 # ---------------------------------------------------------------------------
 
-def _identity_pytree(pytree: PyTree[Array]) -> lx.PyTreeLinearOperator:
-    leaves, structure = jtu.tree_flatten(pytree)
-    eye_structure = structure.compose(structure)
-    eye_leaves = []
-    for i1, l1 in enumerate(leaves):
-        for i2, l2 in enumerate(leaves):
-            dtype = jnp.result_type(l1, l2)
-            if i1 == i2:
-                eye_leaves.append(
-                    jnp.eye(jnp.size(l1), dtype=dtype).reshape(
-                        jnp.shape(l1) + jnp.shape(l2)
-                    )
-                )
-            else:
-                eye_leaves.append(jnp.zeros(jnp.shape(l1) + jnp.shape(l2), dtype=dtype))
-    return lx.PyTreeLinearOperator(
-        jtu.tree_unflatten(eye_structure, eye_leaves),
-        jax.eval_shape(lambda: pytree),
-        lx.symmetric_tag,
+def _make_hessian_f_info(
+    fn: Fn[Y, Scalar, Aux],
+    y: Y,
+    args: PyTree,
+    tags: frozenset[object],
+) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
+    """Evaluate fn and build a FunctionInfo.EvalGradHessian.
+
+    The hessian field is a `lx.JacobianLinearOperator` over `jax.grad(fn_scalar)`
+    evaluated at `y`, tagged as symmetric.  Hessian-vector products are computed
+    lazily via `jax.jvp(grad_fn, (y,), (v,))`.
+
+    Note: `lx.JacobianLinearOperator(fn, x, ...)` expects `fn(x, lx_args)`.
+    We ignore `lx_args` and close over `fn` and `args` from the outer scope.
+    """
+    fn_scalar = lambda _y: fn(_y, args)[0]
+    f_val, aux = fn(y, args)
+    grad = jax.grad(fn_scalar)(y)
+    # JacobianLinearOperator calls fn(x, lx_args); we ignore lx_args.
+    hessian = lx.JacobianLinearOperator(
+        lambda _y, _: jax.grad(fn_scalar)(_y),
+        y,
+        args=None,
+        tags=frozenset({lx.symmetric_tag}) | tags,
     )
+    return FunctionInfo.EvalGradHessian(f_val, grad, hessian), aux
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +130,11 @@ class SteihaugCGDescent(
     3. **CG convergence**: `||r_j|| < rtol * ||g||`. The current iterate is
        returned.
 
+    Hessian-vector products are computed lazily via forward-over-reverse AD
+    (`jax.jvp` of the gradient), so the full Hessian is never materialised.
+    This makes the per-step cost O(k * cost_of_grad) for k CG iterations rather
+    than O(n²).
+
     Because no Cholesky factorisation is required and negative curvature is
     handled gracefully, this descent is suitable for **non-convex** problems
     where the Hessian may be indefinite.
@@ -134,13 +150,10 @@ class SteihaugCGDescent(
         y: Y,
         f_info_struct: FunctionInfo.EvalGradHessian,
     ) -> _SteihaugCGDescentState:
-        del f_info_struct
-        f_info = FunctionInfo.EvalGradHessian(
-            jnp.array(0.0),
-            y,
-            _identity_pytree(y),
-        )
-        return _SteihaugCGDescentState(f_info=f_info, grad_norm=jnp.array(0.0))
+        # Use the same structure as the f_info produced by _make_hessian_f_info,
+        # matching the pattern in DampedNewtonDescent.init().
+        f_info_init = tree_full_like(f_info_struct, 0, allow_static=True)
+        return _SteihaugCGDescentState(f_info=f_info_init, grad_norm=jnp.array(0.0))
 
     def query(
         self,
@@ -219,7 +232,9 @@ class SteihaugCGDescent(
                 tree_where(past_boundary, result_bdy, p_new),
             )
 
-            safe_rr = jnp.where(cg_state.rr > jnp.finfo(cg_state.rr.dtype).eps, cg_state.rr, 1.0)
+            safe_rr = jnp.where(
+                cg_state.rr > jnp.finfo(cg_state.rr.dtype).eps, cg_state.rr, 1.0
+            )
             beta = rr_new / safe_rr
             d_new = (-r_new**ω + beta * cg_state.d**ω).ω
 
@@ -297,14 +312,12 @@ class AbstractNewtonMinimiser(
 ):
     """Abstract base class for exact second-order Newton minimisers.
 
-    Subclasses compute the **true Hessian** of the objective via `jax.hessian`
-    at each accepted step, rather than maintaining a quasi-Newton approximation.
-    This is more expensive per iteration than BFGS but can converge in fewer
-    steps on well-conditioned problems.
-
-    Because the full n×n Hessian is materialised, these methods are best suited
-    to small or medium-sized problems. For large-scale problems prefer
-    [`optimistix.BFGS`][] or [`optimistix.LBFGS`][].
+    Subclasses evaluate the **exact Hessian** at each accepted step using a
+    [`lineax.JacobianLinearOperator`][] wrapping `jax.grad(fn)`, tagged as
+    symmetric. The Hessian is never materialised: Hessian-vector products are
+    computed lazily via forward-over-reverse AD. If the chosen linear solver
+    (e.g. `lineax.Cholesky()`) needs a dense matrix it will materialise on
+    demand, but [`optimistix.SteihaugCGDescent`][] avoids this entirely.
 
     Subclasses must provide the following attributes:
 
@@ -319,8 +332,7 @@ class AbstractNewtonMinimiser(
 
     - `autodiff_mode`: whether to use forward- or reverse-mode autodifferentiation
         to compute the gradient. Can be either `"fwd"` or `"bwd"`. Defaults to
-        `"bwd"`. The Hessian is always computed via forward-over-reverse AD
-        (`jax.hessian`) regardless of this setting.
+        `"bwd"`.
     """
 
     rtol: AbstractVar[float]
@@ -342,11 +354,13 @@ class AbstractNewtonMinimiser(
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
     ) -> _NewtonMinimiserState:
-        f = jnp.zeros(f_struct.shape, f_struct.dtype)
-        grad = tree_full_like(y, 0)
-        hessian = _identity_pytree(y)
-        f_info = FunctionInfo.EvalGradHessian(f, grad, hessian)
-        f_info_struct = eqx.filter_eval_shape(lambda: f_info)
+        # Build f_info_struct via filter_eval_shape so that the hessian field is a
+        # JacobianLinearOperator with the correct static structure (fn object + tags).
+        # This is the same pattern AbstractGaussNewton uses for its FunctionLinearOperator.
+        f_info_struct, _ = eqx.filter_eval_shape(
+            _make_hessian_f_info, fn, y, args, tags
+        )
+        f_info = tree_full_like(f_info_struct, 0, allow_static=True)
         return _NewtonMinimiserState(
             first_step=jnp.array(True),
             y_eval=y,
@@ -387,13 +401,23 @@ class AbstractNewtonMinimiser(
         def accepted(descent_state):
             grad = lin_to_grad(lin_fn, state.y_eval, autodiff_mode, f_eval.dtype)
 
-            # Materialise the true Hessian at the accepted point.
-            hess_pytree = jax.hessian(lambda _y: fn(_y, args)[0])(state.y_eval)
-            hessian = lx.PyTreeLinearOperator(
-                hess_pytree,
-                jax.eval_shape(lambda: grad),
-                lx.symmetric_tag,
+            # Build a JacobianLinearOperator over jax.grad(fn_scalar) at y_eval.
+            # This gives lazy HVPs via jax.jvp without materialising the Hessian.
+            # JacobianLinearOperator expects fn(x, lx_args); we ignore lx_args.
+            fn_scalar = lambda _y: fn(_y, args)[0]
+            hessian = lx.JacobianLinearOperator(
+                lambda _y, _: jax.grad(fn_scalar)(_y),
+                state.y_eval,
+                args=None,
+                tags=frozenset({lx.symmetric_tag}) | tags,
             )
+
+            # Normalise the static structure (fn object) against state.f_info.hessian
+            # so that filter_cond sees the same treedef in both accepted/rejected
+            # branches.  This is the same trick AbstractGaussNewton uses for its jac.
+            dynamic = eqx.filter(hessian, eqx.is_array)
+            static = eqx.filter(state.f_info.hessian, eqx.is_array, inverse=True)
+            hessian = eqx.combine(dynamic, static)
 
             f_eval_info = FunctionInfo.EvalGradHessian(f_eval, grad, hessian)
             descent_state = self.descent.query(state.y_eval, f_eval_info, descent_state)
@@ -485,9 +509,10 @@ class AbstractNewtonMinimiser(
 class LineSearchNewton(AbstractNewtonMinimiser[Y, Aux]):
     """Newton minimiser with Armijo backtracking line-search globalisation.
 
-    At each accepted step the exact Hessian is computed via `jax.hessian` and
-    the Newton system `H δ = -g` is solved to obtain the search direction. An
-    Armijo backtracking line search then finds an acceptable step length.
+    At each accepted step an exact Hessian-vector-product operator is built via
+    `jax.grad` and [`lineax.JacobianLinearOperator`][], then the Newton system
+    `H δ = -g` is solved to obtain the search direction. An Armijo backtracking
+    line search then finds an acceptable step length.
 
     This is a good choice for **convex or near-convex** problems where the
     Hessian is guaranteed to be (or very close to) positive definite. For
@@ -545,14 +570,15 @@ LineSearchNewton.__init__.__doc__ = """**Arguments:**
 class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
     """Newton minimiser with classical trust-region globalisation.
 
-    At each accepted step the exact Hessian is computed via `jax.hessian` and
-    the trust-region subproblem is solved. Two descent directions are supported:
+    At each accepted step an exact Hessian-vector-product operator is built via
+    `jax.grad` and [`lineax.JacobianLinearOperator`][], then the trust-region
+    subproblem is solved. Two descent directions are supported:
 
     - **`NewtonDescent`** (default): solves the full Newton system and scales the
       step to fit within the trust region. Works well for convex problems.
     - **`SteihaugCGDescent`**: solves the trust-region subproblem approximately
       via truncated CG. Handles indefinite Hessians gracefully, making it
-      suitable for **non-convex** problems.
+      suitable for **non-convex** problems. Never materialises the Hessian.
 
     To use `SteihaugCGDescent`, pass `use_steihaug=True`.
 
