@@ -13,6 +13,7 @@ from ._iterate import AbstractIterativeSolver, iterative_solve
 from ._misc import inexact_asarray, NoneAux, OutAsArray, tree_full_like
 from ._solution import Solution
 
+
 if TYPE_CHECKING:
     from ._root_find import AbstractRootFinder
 
