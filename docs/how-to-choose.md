@@ -14,13 +14,6 @@ For relatively "well-behaved" problems -- ones where the initial guess is likely
 
 then the best choice is usually an algorithm like [`optimistix.BFGS`][] or [`optimistix.NonlinearCG`][]. By assuming that your function is relatively well-behaved, then these try to take larger steps to get the minimum faster.
 
-For problems where the function is smooth and (locally) convex, and you need fast convergence or high accuracy, consider a **true second-order method**. Optimistix supports this by passing any [root finder](./api/root_find.md) as the `solver` to [`optimistix.minimise`][]; it will internally find the root of the gradient `∇f(y) = 0` using exact Hessian-vector products via JAX AD. [`optimistix.Newton`][] is a natural choice here:
-
-- For small- to medium-scale problems: use the default `linear_solver` (a direct factorisation). This assembles and factors the Hessian each step and typically converges in very few iterations.
-- For large-scale problems: pass `linear_solver=lx.GMRES(...)` to avoid ever forming the full Hessian (a Newton--Krylov / Hessian-free method).
-
-See the [minimisation docs](./api/minimise.md#second-order-minimisation-via-root-finders) for worked examples.
-
 For "messier" problems -- where the surface of the function is not so well-behaved -- then a first-order gradient algorithm often works well. These work by taking many small steps, and never moving too far away from the current best-so-far. The [Optax](https://github.com/deepmind/optax) library is dedicated to such algorithms; as such you should try e.g. `optimistix.OptaxMinimiser(optax.adabelief(learning_rate=1e-3), rtol=1e-8, atol=1e-8)`.
 
 ## Least-squares problems

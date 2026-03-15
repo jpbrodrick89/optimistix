@@ -293,15 +293,7 @@ _minim_only = (
     ),
 )
 
-# Root-finder-based minimisers: find ∇f(y) = 0, using exact second-order AD.
-# Newton uses a fresh Hessian each step; Chord reuses the initial Hessian.
-# These are minimise()-only (not least_squares()) until that dispatch is added.
-_root_find_minimisers = (
-    optx.Newton(rtol, atol),
-    optx.Chord(rtol, atol),
-)
-
-minimisers = _general_minimisers + _minim_only + _root_find_minimisers
+minimisers = _general_minimisers + _minim_only
 
 # the minimisers can handle least squares problems, but the least squares
 # solvers cannot handle general minimisation problems.
