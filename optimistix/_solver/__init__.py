@@ -41,6 +41,7 @@ from .optax import OptaxMinimiser as OptaxMinimiser
 from .quasi_newton import (
     AbstractBFGS as AbstractBFGS,
     AbstractDFP as AbstractDFP,
+    AbstractNewtonBase as AbstractNewtonBase,
     AbstractQuasiNewton as AbstractQuasiNewton,
     BFGS as BFGS,
     DFP as DFP,

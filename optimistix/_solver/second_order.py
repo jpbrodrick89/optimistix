@@ -40,7 +40,7 @@ import jax.tree_util as jtu
 import lineax as lx
 from equinox import AbstractVar
 from equinox.internal import ω
-from jaxtyping import Array, Bool, Int, PyTree, Scalar
+from jaxtyping import Array, Bool, PyTree, Scalar
 
 from .._custom_types import Aux, DescentState, Fn, SearchState, Y
 from .._minimise import AbstractMinimiser
@@ -59,6 +59,7 @@ from .._solution import RESULTS
 from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
 from .newton_chord import _NoAux
+from .quasi_newton import _NewtonBaseState, AbstractNewtonBase
 from .trust_region import ClassicalTrustRegion
 
 
@@ -275,25 +276,17 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 # ---------------------------------------------------------------------------
 
 
-class _NewtonMinimiserState(eqx.Module, Generic[Y, Aux, SearchState, DescentState]):
+class _NewtonMinimiserState(
+    _NewtonBaseState[Y, Aux, SearchState, DescentState, FunctionInfo.EvalGradHessian],
+    Generic[Y, Aux, SearchState, DescentState],
+):
+    # Exact-Newton grad function: _NoAuxIn(jax.grad(_NoAux(fn)), args)
     hessian_grad_fn: _NoAuxIn
-    # Updated every search step
-    first_step: Bool[Array, ""]
-    y_eval: Y
-    search_state: SearchState
-    # Updated after each accepted descent step
-    f_info: FunctionInfo.EvalGradHessian
-    aux: Aux
-    descent_state: DescentState
-    # Termination
-    terminate: Bool[Array, ""]
-    result: RESULTS
-    # Used in compat.py
-    num_accepted_steps: Int[Array, ""]
 
 
 class AbstractNewtonMinimiser(
     AbstractMinimiser[Y, Aux, _NewtonMinimiserState],
+    AbstractNewtonBase[Y, Aux],
     Generic[Y, Aux],
 ):
     """Abstract base class for exact second-order Newton minimisers.
@@ -321,14 +314,10 @@ class AbstractNewtonMinimiser(
         `"bwd"`.
     """
 
-    rtol: AbstractVar[float]
-    atol: AbstractVar[float]
-    norm: AbstractVar[Callable[[PyTree], Scalar]]
     descent: AbstractVar[AbstractDescent[Y, FunctionInfo.EvalGradHessian, Any]]
     search: AbstractVar[
         AbstractSearch[Y, FunctionInfo.EvalGradHessian, FunctionInfo.Eval, Any]
     ]
-    verbose: AbstractVar[Callable[..., None]]
 
     def init(
         self,

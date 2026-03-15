@@ -38,11 +38,12 @@ from ._search import (
 from ._solution import RESULTS as RESULTS, Solution as Solution
 from ._solver import (
     AbstractBFGS as AbstractBFGS,
-    AbstractNewtonMinimiser as AbstractNewtonMinimiser,
     AbstractDFP as AbstractDFP,
     AbstractGaussNewton as AbstractGaussNewton,
     AbstractGradientDescent as AbstractGradientDescent,
     AbstractLBFGS as AbstractLBFGS,
+    AbstractNewtonBase as AbstractNewtonBase,
+    AbstractNewtonMinimiser as AbstractNewtonMinimiser,
     AbstractQuasiNewton as AbstractQuasiNewton,
     BacktrackingArmijo as BacktrackingArmijo,
     BestSoFarFixedPoint as BestSoFarFixedPoint,
