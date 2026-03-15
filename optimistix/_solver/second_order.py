@@ -46,7 +46,6 @@ from .._custom_types import Aux, DescentState, Fn, SearchState, Y
 from .._misc import (
     cauchy_termination,
     default_verbose,
-    filter_cond,
     max_norm,
     tree_dot,
     tree_full_like,

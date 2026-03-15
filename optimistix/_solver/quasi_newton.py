@@ -112,7 +112,9 @@ class _QuasiNewtonState(
 _BoundNewtonState = TypeVar("_BoundNewtonState", bound=_NewtonBaseState)
 
 
-class AbstractNewtonBase(AbstractMinimiser[Y, Aux, _BoundNewtonState], Generic[Y, Aux, _BoundNewtonState]):
+class AbstractNewtonBase(
+    AbstractMinimiser[Y, Aux, _BoundNewtonState], Generic[Y, Aux, _BoundNewtonState]
+):
     """Abstract base class shared by exact-Newton and quasi-Newton minimisers.
 
     Provides the common `AbstractVar` declarations and a concrete `step`
