@@ -401,23 +401,13 @@ class AbstractNewtonMinimiser(
         def accepted(descent_state):
             grad = lin_to_grad(lin_fn, state.y_eval, autodiff_mode, f_eval.dtype)
 
-            # Build a JacobianLinearOperator over jax.grad(fn_scalar) at y_eval.
-            # This gives lazy HVPs via jax.jvp without materialising the Hessian.
-            # JacobianLinearOperator expects fn(x, lx_args); we ignore lx_args.
-            fn_scalar = lambda _y: fn(_y, args)[0]
-            hessian = lx.JacobianLinearOperator(
-                lambda _y, _: jax.grad(fn_scalar)(_y),
-                state.y_eval,
-                args=None,
-                tags=frozenset({lx.symmetric_tag}) | tags,
+            # Move the linearisation point to y_eval. The fn closure (jaxpr +
+            # captured arrays) was built once in init() and never changes, so
+            # there is no retrace and filter_cond sees identical treedefs in
+            # both branches.
+            hessian = eqx.tree_at(
+                lambda h: h.x, state.f_info.hessian, state.y_eval
             )
-
-            # Normalise the static structure (fn object) against state.f_info.hessian
-            # so that filter_cond sees the same treedef in both accepted/rejected
-            # branches.  This is the same trick AbstractGaussNewton uses for its jac.
-            dynamic = eqx.filter(hessian, eqx.is_array)
-            static = eqx.filter(state.f_info.hessian, eqx.is_array, inverse=True)
-            hessian = eqx.combine(dynamic, static)
 
             f_eval_info = FunctionInfo.EvalGradHessian(f_eval, grad, hessian)
             descent_state = self.descent.query(state.y_eval, f_eval_info, descent_state)
