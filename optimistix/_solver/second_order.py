@@ -21,16 +21,16 @@ For large-scale problems consider [`optimistix.BFGS`][] or [`optimistix.LBFGS`][
 
 ### Comparison with the quasi-Newton solvers in optimistix
 
-| Attribute          | BFGS / L-BFGS                | LineSearchNewton / TrustNewton         |
-|--------------------|------------------------------|----------------------------------------|
-| Hessian            | Approximate (rank-2 update)  | Exact (JacobianLinearOperator)        |
-| Cost per HVP       | O(n)                         | O(cost of one grad eval)              |
-| Non-convex support | Limited (requires PD approx) | TrustNewton + SteihaugCGDescent       |
-| Good for           | Large-scale problems         | Small/medium, accurate solutions      |
+| Attribute          | BFGS / L-BFGS                | LineSearchNewton / TrustNewton  |
+|--------------------|------------------------------|---------------------------------|
+| Hessian            | Approximate (rank-2 update)  | Exact (FunctionLinearOperator)  |
+| Cost per HVP       | O(n)                         | O(cost of one grad eval)        |
+| Non-convex support | Limited (requires PD approx) | TrustNewton + SteihaugCGDescent |
+| Good for           | Large-scale problems         | Small/medium, accurate solution |
 """
 
 from collections.abc import Callable
-from typing import Any, Generic
+from typing import Any, cast, Generic
 
 import equinox as eqx
 import jax
@@ -48,7 +48,6 @@ from .._misc import (
     cauchy_termination,
     default_verbose,
     filter_cond,
-
     max_norm,
     tree_dot,
     tree_full_like,
@@ -62,22 +61,13 @@ from .gauss_newton import NewtonDescent
 from .trust_region import ClassicalTrustRegion
 
 
-# ---------------------------------------------------------------------------
-# _HessianGradFn: cached gradient callable stored in solver state.
-#
-# Mirrors _NoAux in newton_chord.py.  By keeping this as a stable eqx.Module
-# in state we pass the *same Python object* to jax.linearize every step, so
-# the FunctionLinearOperator produced each time has the same jaxpr structure
-# (same function, same abstract input shape).  The normalisation trick below
-# then only needs to swap dynamic residuals, not reconcile different objects.
-# ---------------------------------------------------------------------------
-
+# Stable eqx.Module wrapper for ∇f; cached in state so jax.linearize sees the
+# same jaxpr structure every step (needed for the normalisation trick below).
 class _HessianGradFn(eqx.Module):
     fn: Callable
     args: Any
 
     def __call__(self, y: Y) -> Y:
-        """Return ∇f(y); jax.linearize of this gives the Hessian-vector product."""
         return jax.grad(lambda _y: self.fn(_y, self.args)[0])(y)
 
 
@@ -88,14 +78,6 @@ def _make_hessian_f_info(
     args: PyTree,
     tags: frozenset[object],
 ) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
-    """Evaluate fn and build a FunctionInfo.EvalGradHessian.
-
-    Mirrors _make_f_info in gauss_newton.py: calls jax.linearize on the
-    gradient function to obtain a FunctionLinearOperator for the Hessian.
-    Each mv(v) replays the already-computed primal residuals with v as
-    tangent, so the primal is shared across all mv calls (important for
-    direct solvers that materialise the matrix via n mv calls).
-    """
     f_val, aux = fn(y, args)
     grad, hess_mv_fn = jax.linearize(hessian_grad_fn, y)
     hessian = lx.FunctionLinearOperator(
@@ -107,6 +89,7 @@ def _make_hessian_f_info(
 # ---------------------------------------------------------------------------
 # SteihaugCGDescent
 # ---------------------------------------------------------------------------
+
 
 class _SteihaugCGDescentState(eqx.Module, Generic[Y]):
     f_info: FunctionInfo.EvalGradHessian
@@ -158,8 +141,6 @@ class SteihaugCGDescent(
         y: Y,
         f_info_struct: FunctionInfo.EvalGradHessian,
     ) -> _SteihaugCGDescentState:
-        # Use the same structure as the f_info produced by _make_hessian_f_info,
-        # matching the pattern in DampedNewtonDescent.init().
         f_info_init = tree_full_like(f_info_struct, 0, allow_static=True)
         return _SteihaugCGDescentState(f_info=f_info_init, grad_norm=jnp.array(0.0))
 
@@ -178,23 +159,20 @@ class SteihaugCGDescent(
         g = state.f_info.grad
         H = state.f_info.hessian
 
-        # Scale trust-region radius: step_size=1 corresponds to ||g|| distance.
         delta_sq = (state.grad_norm * step_size) ** 2
-
-        r0_norm_sq = tree_dot(g, g)  # == grad_norm^2
+        r0_norm_sq = cast(Array, tree_dot(g, g))
         tol_sq = (self.rtol**2) * r0_norm_sq
 
-        # CG state: iterate p, residual r, direction d, ||r||^2
         p0 = tree_full_like(g, 0)
         r0 = g
         d0 = jtu.tree_map(jnp.negative, g)
 
-        class _CGState(eqx.Module, Generic[Y]):
-            p: Y
-            r: Y
-            d: Y
+        class _CGState(eqx.Module):
+            p: Any
+            r: Any
+            d: Any
             rr: Scalar
-            result_p: Y         # committed output once done
+            result_p: Any  # committed output once done
             done: Bool[Array, ""]
 
         def _find_boundary_tau(p, d):
@@ -209,7 +187,7 @@ class SteihaugCGDescent(
 
         def body_fn(i, cg_state: _CGState) -> _CGState:
             Hd = H.mv(cg_state.d)
-            dHd = tree_dot(cg_state.d, Hd)
+            dHd = cast(Array, tree_dot(cg_state.d, Hd))
 
             # Case 1: negative or zero curvature — step to boundary along d.
             neg_curve = dHd <= jnp.finfo(dHd.dtype).eps
@@ -228,7 +206,7 @@ class SteihaugCGDescent(
             result_bdy = (cg_state.p**ω + tau_bdy * cg_state.d**ω).ω
 
             r_new = (cg_state.r**ω + alpha * Hd**ω).ω
-            rr_new = tree_dot(r_new, r_new)
+            rr_new = cast(Array, tree_dot(r_new, r_new))
 
             # Case 3: CG residual small enough — return current p_new.
             converged = rr_new < tol_sq
@@ -244,7 +222,7 @@ class SteihaugCGDescent(
                 cg_state.rr > jnp.finfo(cg_state.rr.dtype).eps, cg_state.rr, 1.0
             )
             beta = rr_new / safe_rr
-            d_new = (-r_new**ω + beta * cg_state.d**ω).ω
+            d_new = (-(r_new**ω) + beta * cg_state.d**ω).ω
 
             new_done = cg_state.done | done_now
             # Freeze result_p once we first commit; keep updating p otherwise.
@@ -278,8 +256,6 @@ class SteihaugCGDescent(
 
         final_cg = lax.fori_loop(0, self.max_steps, body_fn, init_cg)
 
-        # The CG solves min g^T p + 0.5 p^T H p, so p = -H^{-1}g already points
-        # downhill. The solver computes y_eval = y + y_diff, so y_diff = p directly.
         return final_cg.result_p, RESULTS.successful
 
 
@@ -298,9 +274,8 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 # AbstractNewtonMinimiser
 # ---------------------------------------------------------------------------
 
+
 class _NewtonMinimiserState(eqx.Module, Generic[Y, Aux, SearchState, DescentState]):
-    # Cached gradient function; stable across steps so jax.linearize always
-    # sees the same jaxpr structure for filter_cond consistency.
     hessian_grad_fn: _HessianGradFn
     # Updated every search step
     first_step: Bool[Array, ""]
@@ -392,9 +367,6 @@ class AbstractNewtonMinimiser(
         state: _NewtonMinimiserState,
         tags: frozenset[object],
     ) -> tuple[Y, _NewtonMinimiserState, Aux]:
-        # Direct call for the scalar value the search needs.  We don't use
-        # jax.linearize here because we don't need lin_fn for anything else:
-        # the gradient comes for free from jax.linearize(hessian_grad_fn) below.
         f_eval, aux_eval = fn(state.y_eval, args)
 
         step_size, accept, search_result, search_state = self.search.step(
@@ -407,19 +379,16 @@ class AbstractNewtonMinimiser(
         )
 
         def accepted(descent_state):
-            # jax.linearize on the gradient function gives (∇f(y), hess_mv_fn)
-            # in one forward-over-reverse pass.  The primal IS the gradient, so
-            # we get EvalGrad for free — exactly the same reason Newton root
-            # finder uses jax.linearize(fn, y) to get f_eval alongside lin_fn.
+            # Primal of linearizing ∇f is the gradient itself; same pattern as
+            # Newton root finder using jax.linearize(fn, y) to get f_eval.
             grad, hess_mv_fn = jax.linearize(state.hessian_grad_fn, state.y_eval)
             hessian = lx.FunctionLinearOperator(
                 hess_mv_fn,
                 jax.eval_shape(lambda: state.y_eval),
                 frozenset({lx.symmetric_tag}) | tags,
             )
-            # Normalise static structure (jaxpr) against state.f_info.hessian so
-            # filter_cond sees the same treedef in both branches — same trick as
-            # AbstractGaussNewton uses for its jac.
+            # Swap in residuals from this step while keeping the static jaxpr
+            # from state, so filter_cond sees identical treedefs in both branches.
             dynamic = eqx.filter(hessian, eqx.is_array)
             static = eqx.filter(state.f_info.hessian, eqx.is_array, inverse=True)
             hessian = eqx.combine(dynamic, static)
@@ -512,6 +481,7 @@ class AbstractNewtonMinimiser(
 # LineSearchNewton
 # ---------------------------------------------------------------------------
 
+
 class LineSearchNewton(AbstractNewtonMinimiser[Y, Aux]):
     """Newton minimiser with Armijo backtracking line-search globalisation.
 
@@ -572,6 +542,7 @@ LineSearchNewton.__init__.__doc__ = """**Arguments:**
 # ---------------------------------------------------------------------------
 # TrustNewton
 # ---------------------------------------------------------------------------
+
 
 class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
     """Newton minimiser with classical trust-region globalisation.
