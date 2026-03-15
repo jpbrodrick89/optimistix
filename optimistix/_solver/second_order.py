@@ -285,8 +285,8 @@ class _NewtonMinimiserState(
 
 
 class AbstractNewtonMinimiser(
+    AbstractNewtonBase[Y, Aux, _NewtonMinimiserState],
     AbstractMinimiser[Y, Aux, _NewtonMinimiserState],
-    AbstractNewtonBase[Y, Aux],
     Generic[Y, Aux],
 ):
     """Abstract base class for exact second-order Newton minimisers.
@@ -347,7 +347,7 @@ class AbstractNewtonMinimiser(
             num_accepted_steps=jnp.array(0),
         )
 
-    def step(
+    def _prepare_step(
         self,
         fn: Fn[Y, Scalar, Aux],
         y: Y,
@@ -355,17 +355,8 @@ class AbstractNewtonMinimiser(
         options: dict[str, Any],
         state: _NewtonMinimiserState,
         tags: frozenset[object],
-    ) -> tuple[Y, _NewtonMinimiserState, Aux]:
+    ) -> tuple[Scalar, Aux, Callable[..., Any], None]:
         f_eval, aux_eval = fn(state.y_eval, args)
-
-        step_size, accept, search_result, search_state = self.search.step(
-            state.first_step,
-            y,
-            state.y_eval,
-            state.f_info,
-            FunctionInfo.Eval(f_eval),
-            state.search_state,
-        )
 
         def accepted(descent_state):
             grad, hess_mv_fn = jax.linearize(state.hessian_grad_fn, state.y_eval)
@@ -395,38 +386,26 @@ class AbstractNewtonMinimiser(
                 aux_eval,
                 descent_state,
                 terminate,
+                None,
             )
 
-        def rejected(descent_state):
-            return (
-                y,
-                state.f_info,
-                state.aux,
-                descent_state,
-                jnp.array(False),
-            )
+        return f_eval, aux_eval, accepted, None
 
-        y, f_info, aux, descent_state, terminate = filter_cond(
-            accept, accepted, rejected, state.descent_state
-        )
-
-        self.verbose(
-            loss_this_step=("Loss on this step", f_eval),
-            loss_last_accepted_step=("Loss on the last accepted step", state.f_info.f),
-            step_size=("Step size", step_size),
-            y=("y", state.y_eval),
-            y_last_accepted_step=("y on the last accepted step", y),
-        )
-
-        y_descent, descent_result = self.descent.step(step_size, descent_state)
-        y_eval = (y**ω + y_descent**ω).ω
-        result = RESULTS.where(
-            search_result == RESULTS.successful, descent_result, search_result
-        )
-
-        prev_aux = tree_where(state.first_step, aux, state.aux)
-        state = _NewtonMinimiserState(
-            hessian_grad_fn=state.hessian_grad_fn,
+    def _build_new_state(
+        self,
+        old_state: _NewtonMinimiserState,
+        y_eval: Y,
+        search_state: Any,
+        f_info: FunctionInfo.EvalGradHessian,
+        aux: Aux,
+        descent_state: Any,
+        terminate: Bool[Array, ""],
+        result: RESULTS,
+        accept: Bool[Array, ""],
+        hessian_update_state: None,
+    ) -> _NewtonMinimiserState:
+        return _NewtonMinimiserState(
+            hessian_grad_fn=old_state.hessian_grad_fn,
             first_step=jnp.array(False),
             y_eval=y_eval,
             search_state=search_state,
@@ -435,9 +414,8 @@ class AbstractNewtonMinimiser(
             descent_state=descent_state,
             terminate=terminate,
             result=result,
-            num_accepted_steps=state.num_accepted_steps + jnp.where(accept, 1, 0),
+            num_accepted_steps=old_state.num_accepted_steps + jnp.where(accept, 1, 0),
         )
-        return y, state, prev_aux
 
     def terminate(
         self,
