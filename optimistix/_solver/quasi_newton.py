@@ -38,40 +38,6 @@ _Hessian = TypeVar(
 )
 
 
-class _NewtonBaseState(
-    eqx.Module,
-    Generic[Y, Aux, SearchState, DescentState, _Hessian],
-):
-    # Updated every search step
-    first_step: Bool[Array, ""]
-    y_eval: Y
-    search_state: SearchState
-    # Updated after each accepted descent step
-    f_info: _Hessian
-    aux: Aux
-    descent_state: DescentState
-    # Termination
-    terminate: Bool[Array, ""]
-    result: RESULTS
-    # Used in compat.py
-    num_accepted_steps: Int[Array, ""]
-
-
-class AbstractNewtonBase(eqx.Module, Generic[Y, Aux]):
-    """Abstract base class shared by exact-Newton and quasi-Newton minimisers.
-
-    Provides the common `AbstractVar` declarations, `terminate`, and `postprocess`
-    implementations. Subclasses must implement `init` and `step`.
-    """
-
-    rtol: AbstractVar[float]
-    atol: AbstractVar[float]
-    norm: AbstractVar[Callable[[PyTree], Scalar]]
-    descent: AbstractVar[AbstractDescent[Y, Any, Any]]
-    search: AbstractVar[AbstractSearch[Y, Any, FunctionInfo.Eval, Any]]
-    verbose: AbstractVar[Callable[..., None]]
-
-
 def _identity_pytree(pytree: PyTree[Array]) -> lx.PyTreeLinearOperator:
     """Create an identity pytree `I` such that
     `pytree = lx.PyTreeLinearOperator(I).mv(pytree)`
@@ -116,12 +82,47 @@ def _outer(tree1, tree2):
     return jtu.tree_map(leaf_fn, tree1)
 
 
+class _NewtonBaseState(
+    eqx.Module,
+    Generic[Y, Aux, SearchState, DescentState, _Hessian],
+):
+    # Updated every search step
+    first_step: Bool[Array, ""]
+    y_eval: Y
+    search_state: SearchState
+    # Updated after each accepted descent step
+    f_info: _Hessian
+    aux: Aux
+    descent_state: DescentState
+    # Termination
+    terminate: Bool[Array, ""]
+    result: RESULTS
+    # Used in compat.py
+    num_accepted_steps: Int[Array, ""]
+
+
 class _QuasiNewtonState(
     _NewtonBaseState[Y, Aux, SearchState, DescentState, _Hessian],
     Generic[Y, Aux, SearchState, DescentState, _Hessian, HessianUpdateState],
 ):
     # Quasi-Newton Hessian approximation update state
     hessian_update_state: HessianUpdateState
+
+
+class AbstractNewtonBase(eqx.Module, Generic[Y, Aux]):
+    """Abstract base class shared by exact-Newton and quasi-Newton minimisers.
+
+    Provides the common `AbstractVar` declarations used by both exact-Newton
+    and quasi-Newton minimisers. Subclasses must implement `init`, `step`,
+    `terminate`, and `postprocess`.
+    """
+
+    rtol: AbstractVar[float]
+    atol: AbstractVar[float]
+    norm: AbstractVar[Callable[[PyTree], Scalar]]
+    descent: AbstractVar[AbstractDescent[Y, Any, Any]]
+    search: AbstractVar[AbstractSearch[Y, Any, FunctionInfo.Eval, Any]]
+    verbose: AbstractVar[Callable[..., None]]
 
 
 class AbstractQuasiNewton(
