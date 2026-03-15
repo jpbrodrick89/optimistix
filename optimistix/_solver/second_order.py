@@ -48,7 +48,7 @@ from .._misc import (
     cauchy_termination,
     default_verbose,
     filter_cond,
-    lin_to_grad,
+
     max_norm,
     tree_dot,
     tree_full_like,
@@ -392,12 +392,10 @@ class AbstractNewtonMinimiser(
         state: _NewtonMinimiserState,
         tags: frozenset[object],
     ) -> tuple[Y, _NewtonMinimiserState, Aux]:
-        autodiff_mode = options.get("autodiff_mode", "bwd")
-
-        # Evaluate fn at the current trial point to give the search a scalar.
-        f_eval, lin_fn, aux_eval = jax.linearize(
-            lambda _y: fn(_y, args), state.y_eval, has_aux=True
-        )
+        # Direct call for the scalar value the search needs.  We don't use
+        # jax.linearize here because we don't need lin_fn for anything else:
+        # the gradient comes for free from jax.linearize(hessian_grad_fn) below.
+        f_eval, aux_eval = fn(state.y_eval, args)
 
         step_size, accept, search_result, search_state = self.search.step(
             state.first_step,
@@ -409,13 +407,11 @@ class AbstractNewtonMinimiser(
         )
 
         def accepted(descent_state):
-            grad = lin_to_grad(lin_fn, state.y_eval, autodiff_mode, f_eval.dtype)
-
-            # Mirrors Newton root finder: jax.linearize the gradient function to
-            # get a FunctionLinearOperator whose mv(v) replays the primal once
-            # rather than re-evaluating fn per call (important for direct solvers
-            # that call mv n times to materialise the matrix).
-            _, hess_mv_fn = jax.linearize(state.hessian_grad_fn, state.y_eval)
+            # jax.linearize on the gradient function gives (∇f(y), hess_mv_fn)
+            # in one forward-over-reverse pass.  The primal IS the gradient, so
+            # we get EvalGrad for free — exactly the same reason Newton root
+            # finder uses jax.linearize(fn, y) to get f_eval alongside lin_fn.
+            grad, hess_mv_fn = jax.linearize(state.hessian_grad_fn, state.y_eval)
             hessian = lx.FunctionLinearOperator(
                 hess_mv_fn,
                 jax.eval_shape(lambda: state.y_eval),
