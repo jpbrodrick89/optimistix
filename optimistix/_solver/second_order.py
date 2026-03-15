@@ -58,11 +58,11 @@ from .._search import AbstractDescent, AbstractSearch, FunctionInfo
 from .._solution import RESULTS
 from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
+from .newton_chord import _NoAux
 from .trust_region import ClassicalTrustRegion
 
 
-# Mirrors lineax's private _NoAuxIn/_NoAuxOut; defined here to avoid importing
-# private symbols.
+# Mirrors lineax's private _NoAuxIn; defined here to avoid importing private symbols.
 class _NoAuxIn(eqx.Module):
     fn: Callable
     args: Any
@@ -71,16 +71,8 @@ class _NoAuxIn(eqx.Module):
         return self.fn(y, self.args)
 
 
-class _NoAuxOut(eqx.Module):
-    fn: Callable
-
-    def __call__(self, y):
-        out, _ = self.fn(y)
-        return out
-
-
 def _make_hessian_f_info(
-    hessian_grad_fn: _NoAuxOut,
+    hessian_grad_fn: _NoAuxIn,
     fn: Fn[Y, Scalar, Aux],
     y: Y,
     args: PyTree,
@@ -284,7 +276,7 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 
 
 class _NewtonMinimiserState(eqx.Module, Generic[Y, Aux, SearchState, DescentState]):
-    hessian_grad_fn: _NoAuxOut
+    hessian_grad_fn: _NoAuxIn
     # Updated every search step
     first_step: Bool[Array, ""]
     y_eval: Y
@@ -348,7 +340,7 @@ class AbstractNewtonMinimiser(
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
     ) -> _NewtonMinimiserState:
-        hessian_grad_fn = _NoAuxOut(_NoAuxIn(jax.grad(fn, has_aux=True), args))
+        hessian_grad_fn = _NoAuxIn(jax.grad(_NoAux(fn)), args)
         f_info_struct, _ = eqx.filter_eval_shape(
             _make_hessian_f_info, hessian_grad_fn, fn, y, args, tags
         )
