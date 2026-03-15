@@ -109,10 +109,10 @@ class _QuasiNewtonState(
     hessian_update_state: HessianUpdateState
 
 
-_StateT = TypeVar("_StateT", bound=_NewtonBaseState)
+_BoundNewtonState = TypeVar("_BoundNewtonState", bound=_NewtonBaseState)
 
 
-class AbstractNewtonBase(eqx.Module, Generic[Y, Aux, _StateT]):
+class AbstractNewtonBase(AbstractMinimiser[Y, Aux, _BoundNewtonState], Generic[Y, Aux, _BoundNewtonState]):
     """Abstract base class shared by exact-Newton and quasi-Newton minimisers.
 
     Provides the common `AbstractVar` declarations and a concrete `step`
@@ -135,7 +135,7 @@ class AbstractNewtonBase(eqx.Module, Generic[Y, Aux, _StateT]):
         y: Y,
         args: PyTree,
         options: dict[str, Any],
-        state: _StateT,
+        state: _BoundNewtonState,
         tags: frozenset[object],
     ) -> tuple[Scalar, Aux, Callable[..., Any], Any]:
         """Evaluate fn at ``state.y_eval`` and prepare the accepted branch.
@@ -156,7 +156,7 @@ class AbstractNewtonBase(eqx.Module, Generic[Y, Aux, _StateT]):
     @abc.abstractmethod
     def _build_new_state(
         self,
-        old_state: _StateT,
+        old_state: _BoundNewtonState,
         y_eval: Y,
         search_state: Any,
         f_info: Any,
@@ -166,7 +166,7 @@ class AbstractNewtonBase(eqx.Module, Generic[Y, Aux, _StateT]):
         result: RESULTS,
         accept: Bool[Array, ""],
         hessian_update_state: Any,
-    ) -> _StateT:
+    ) -> _BoundNewtonState:
         """Construct the updated solver state after a step."""
 
     def step(
@@ -175,9 +175,9 @@ class AbstractNewtonBase(eqx.Module, Generic[Y, Aux, _StateT]):
         y: Y,
         args: PyTree,
         options: dict[str, Any],
-        state: _StateT,
+        state: _BoundNewtonState,
         tags: frozenset[object],
-    ) -> tuple[Y, _StateT, Aux]:
+    ) -> tuple[Y, _BoundNewtonState, Aux]:
         f_eval, aux_eval, accepted, hus_for_rejected = self._prepare_step(
             fn, y, args, options, state, tags
         )
@@ -236,7 +236,6 @@ class AbstractNewtonBase(eqx.Module, Generic[Y, Aux, _StateT]):
 
 class AbstractQuasiNewton(
     AbstractNewtonBase[Y, Aux, _QuasiNewtonState],
-    AbstractMinimiser[Y, Aux, _QuasiNewtonState],
     Generic[Y, Aux, _Hessian, HessianUpdateState],
 ):
     """Abstract quasi-Newton minimisation algorithm.

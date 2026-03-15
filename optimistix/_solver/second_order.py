@@ -43,7 +43,6 @@ from equinox.internal import ω
 from jaxtyping import Array, Bool, PyTree, Scalar
 
 from .._custom_types import Aux, DescentState, Fn, SearchState, Y
-from .._minimise import AbstractMinimiser
 from .._misc import (
     cauchy_termination,
     default_verbose,
@@ -286,7 +285,6 @@ class _NewtonMinimiserState(
 
 class AbstractNewtonMinimiser(
     AbstractNewtonBase[Y, Aux, _NewtonMinimiserState],
-    AbstractMinimiser[Y, Aux, _NewtonMinimiserState],
     Generic[Y, Aux],
 ):
     """Abstract base class for exact second-order Newton minimisers.
