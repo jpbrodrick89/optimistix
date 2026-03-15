@@ -63,12 +63,26 @@ from .trust_region import ClassicalTrustRegion
 
 
 # ---------------------------------------------------------------------------
-# Helper: build the initial f_info structure with a JacobianLinearOperator
-# hessian, following the same pattern as _make_f_info in gauss_newton.py.
-# Called inside eqx.filter_eval_shape so only structure (not values) matters.
+# _HessianGradFn: cached gradient callable stored in solver state.
+#
+# Mirrors _NoAux in newton_chord.py.  By keeping this as a stable eqx.Module
+# in state we pass the *same Python object* to jax.linearize every step, so
+# the FunctionLinearOperator produced each time has the same jaxpr structure
+# (same function, same abstract input shape).  The normalisation trick below
+# then only needs to swap dynamic residuals, not reconcile different objects.
 # ---------------------------------------------------------------------------
 
+class _HessianGradFn(eqx.Module):
+    fn: Callable
+    args: Any
+
+    def __call__(self, y: Y) -> Y:
+        """Return ∇f(y); jax.linearize of this gives the Hessian-vector product."""
+        return jax.grad(lambda _y: self.fn(_y, self.args)[0])(y)
+
+
 def _make_hessian_f_info(
+    hessian_grad_fn: _HessianGradFn,
     fn: Fn[Y, Scalar, Aux],
     y: Y,
     args: PyTree,
@@ -76,22 +90,16 @@ def _make_hessian_f_info(
 ) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
     """Evaluate fn and build a FunctionInfo.EvalGradHessian.
 
-    The hessian field is a `lx.JacobianLinearOperator` over `jax.grad(fn_scalar)`
-    evaluated at `y`, tagged as symmetric.  Hessian-vector products are computed
-    lazily via `jax.jvp(grad_fn, (y,), (v,))`.
-
-    Note: `lx.JacobianLinearOperator(fn, x, ...)` expects `fn(x, lx_args)`.
-    We ignore `lx_args` and close over `fn` and `args` from the outer scope.
+    Mirrors _make_f_info in gauss_newton.py: calls jax.linearize on the
+    gradient function to obtain a FunctionLinearOperator for the Hessian.
+    Each mv(v) replays the already-computed primal residuals with v as
+    tangent, so the primal is shared across all mv calls (important for
+    direct solvers that materialise the matrix via n mv calls).
     """
-    fn_scalar = lambda _y: fn(_y, args)[0]
     f_val, aux = fn(y, args)
-    grad = jax.grad(fn_scalar)(y)
-    # JacobianLinearOperator calls fn(x, lx_args); we ignore lx_args.
-    hessian = lx.JacobianLinearOperator(
-        lambda _y, _: jax.grad(fn_scalar)(_y),
-        y,
-        args=None,
-        tags=frozenset({lx.symmetric_tag}) | tags,
+    grad, hess_mv_fn = jax.linearize(hessian_grad_fn, y)
+    hessian = lx.FunctionLinearOperator(
+        hess_mv_fn, jax.eval_shape(lambda: y), frozenset({lx.symmetric_tag}) | tags
     )
     return FunctionInfo.EvalGradHessian(f_val, grad, hessian), aux
 
@@ -291,6 +299,9 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 # ---------------------------------------------------------------------------
 
 class _NewtonMinimiserState(eqx.Module, Generic[Y, Aux, SearchState, DescentState]):
+    # Cached gradient function; stable across steps so jax.linearize always
+    # sees the same jaxpr structure for filter_cond consistency.
+    hessian_grad_fn: _HessianGradFn
     # Updated every search step
     first_step: Bool[Array, ""]
     y_eval: Y
@@ -354,14 +365,13 @@ class AbstractNewtonMinimiser(
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
     ) -> _NewtonMinimiserState:
-        # Build f_info_struct via filter_eval_shape so that the hessian field is a
-        # JacobianLinearOperator with the correct static structure (fn object + tags).
-        # This is the same pattern AbstractGaussNewton uses for its FunctionLinearOperator.
+        hessian_grad_fn = _HessianGradFn(fn=fn, args=args)
         f_info_struct, _ = eqx.filter_eval_shape(
-            _make_hessian_f_info, fn, y, args, tags
+            _make_hessian_f_info, hessian_grad_fn, fn, y, args, tags
         )
         f_info = tree_full_like(f_info_struct, 0, allow_static=True)
         return _NewtonMinimiserState(
+            hessian_grad_fn=hessian_grad_fn,
             first_step=jnp.array(True),
             y_eval=y,
             search_state=self.search.init(y, f_info_struct),
@@ -401,13 +411,22 @@ class AbstractNewtonMinimiser(
         def accepted(descent_state):
             grad = lin_to_grad(lin_fn, state.y_eval, autodiff_mode, f_eval.dtype)
 
-            # Move the linearisation point to y_eval. The fn closure (jaxpr +
-            # captured arrays) was built once in init() and never changes, so
-            # there is no retrace and filter_cond sees identical treedefs in
-            # both branches.
-            hessian = eqx.tree_at(
-                lambda h: h.x, state.f_info.hessian, state.y_eval
+            # Mirrors Newton root finder: jax.linearize the gradient function to
+            # get a FunctionLinearOperator whose mv(v) replays the primal once
+            # rather than re-evaluating fn per call (important for direct solvers
+            # that call mv n times to materialise the matrix).
+            _, hess_mv_fn = jax.linearize(state.hessian_grad_fn, state.y_eval)
+            hessian = lx.FunctionLinearOperator(
+                hess_mv_fn,
+                jax.eval_shape(lambda: state.y_eval),
+                frozenset({lx.symmetric_tag}) | tags,
             )
+            # Normalise static structure (jaxpr) against state.f_info.hessian so
+            # filter_cond sees the same treedef in both branches — same trick as
+            # AbstractGaussNewton uses for its jac.
+            dynamic = eqx.filter(hessian, eqx.is_array)
+            static = eqx.filter(state.f_info.hessian, eqx.is_array, inverse=True)
+            hessian = eqx.combine(dynamic, static)
 
             f_eval_info = FunctionInfo.EvalGradHessian(f_eval, grad, hessian)
             descent_state = self.descent.query(state.y_eval, f_eval_info, descent_state)
@@ -455,6 +474,7 @@ class AbstractNewtonMinimiser(
 
         prev_aux = tree_where(state.first_step, aux, state.aux)
         state = _NewtonMinimiserState(
+            hessian_grad_fn=state.hessian_grad_fn,
             first_step=jnp.array(False),
             y_eval=y_eval,
             search_state=search_state,
