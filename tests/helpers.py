@@ -258,12 +258,14 @@ _general_minimisers = (
     optx.OptaxMinimiser(optax.adam(learning_rate=3e-3), rtol=rtol, atol=atol),
     # optax.lbfgs includes their linesearch by default
     optx.OptaxMinimiser(optax.lbfgs(), rtol=rtol, atol=atol),
-    # Exact-Hessian Newton solvers. LineSearchNewton and TrustNewton with
-    # NewtonDescent require a (near-)PSD Hessian; TrustNewton with
-    # use_steihaug=True handles indefinite Hessians via truncated CG.
-    optx.LineSearchNewton(rtol, atol),
+    # Exact-Hessian Newton solvers.
+    # Cholesky/CG variants require positive_semidefinite_tag (globally-convex problems).
+    # TruncatedCG / use_steihaug=True handle indefinite Hessians without a PSD tag.
+    optx.LineSearchNewton(rtol, atol),  # default Cholesky
+    optx.LineSearchNewton(rtol, atol, linear_solver=lx.CG(rtol=1e-6, atol=0.0)),
     optx.LineSearchNewton(rtol, atol, linear_solver=optx.TruncatedCG(rtol=0.5, atol=0.0)),
-    optx.TrustNewton(rtol, atol),
+    optx.TrustNewton(rtol, atol),  # default Cholesky
+    optx.TrustNewton(rtol, atol, linear_solver=lx.CG(rtol=1e-6, atol=0.0)),
     optx.TrustNewton(rtol, atol, use_steihaug=True),
 )
 
@@ -423,6 +425,14 @@ def square_minus_one(x: Array, args: PyTree):
     return jnp.sum(jnp.square(x)) - 1.0
 
 
+def globally_convex(y: Array, _) -> Scalar:
+    """Non-quadratic globally convex function: f(y) = Σ cosh(y_i) − 1.
+
+    Hessian H = diag(cosh(y)) > 0 everywhere; unique minimum at y = 0, f* = 0.
+    """
+    return jnp.sum(jnp.cosh(y) - 1)
+
+
 #
 # The MLP can be difficult for some of the solvers to optimise. Rather than set
 # max_steps to a higher value and iterate for longer, we initialise the MLP
@@ -566,7 +576,29 @@ minimisation_fn_minima_init_args = (
     ),
     # Problems with initial value of 0
     (square_minus_one, jnp.array(-1.0), jnp.array(1.0), None),
+    # Globally convex (PSD Hessian everywhere); used for Newton+Cholesky/CG tests.
+    (globally_convex, jnp.array(0.0), jnp.array([4.0, -3.0, 2.0]), None),
 )
+
+# Problems known to have a globally positive-semidefinite Hessian.
+# Newton solvers with Cholesky or CG require this; pass
+# tags=frozenset({lx.positive_semidefinite_tag}) to minimise/least_squares for these.
+_spd_minimisation_fns = frozenset({bowl, matyas, square_minus_one, globally_convex})
+
+
+def _newton_needs_psd(solver) -> bool:
+    """True when solver requires positive_semidefinite_tag on the Hessian.
+
+    Returns False for solvers that handle indefinite Hessians (SteihaugCGDescent
+    or NewtonDescent with TruncatedCG as the linear solver).
+    """
+    if not isinstance(solver, (optx.LineSearchNewton, optx.TrustNewton)):
+        return False
+    if isinstance(solver.descent, optx.SteihaugCGDescent):
+        return False
+    if isinstance(getattr(solver.descent, "linear_solver", None), optx.TruncatedCG):
+        return False
+    return True
 
 # ROOT FIND/FIXED POINT PROBLEMS
 #

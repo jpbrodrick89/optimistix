@@ -55,17 +55,10 @@ from .._solution import RESULTS
 from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
 
+from .newton_chord import _NoAux
 from .quasi_newton import _NewtonMinimiserState, AbstractNewtonBase
 from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
-
-
-class _NoAux(eqx.Module):
-    fn: Callable
-
-    def __call__(self, y, args):
-        out, _ = self.fn(y, args)
-        return out
 
 
 def _make_hessian_f_info(
@@ -75,9 +68,8 @@ def _make_hessian_f_info(
     tags: frozenset[object],
 ) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
     f_val, aux = fn(y, args)
-    fn_no_aux = _NoAux(fn)
     grad, hess_mv_fn = jax.linearize(
-        lambda _y: jax.grad(fn_no_aux)(_y, args), y
+        lambda _y: jax.grad(_NoAux(fn))(_y, args), y
     )
     hessian = lx.FunctionLinearOperator(
         hess_mv_fn, jax.eval_shape(lambda: y), frozenset({lx.symmetric_tag}) | tags
@@ -270,11 +262,9 @@ class AbstractNewtonMinimiser(
     ) -> tuple[Scalar, Aux, Callable[..., Any], None]:
         f_eval, aux_eval = fn(state.y_eval, args)
 
-        fn_no_aux = _NoAux(fn)
-
         def accepted(descent_state):
             grad, hess_mv_fn = jax.linearize(
-                lambda _y: jax.grad(fn_no_aux)(_y, args), state.y_eval
+                lambda _y: jax.grad(_NoAux(fn))(_y, args), state.y_eval
             )
             hessian = lx.FunctionLinearOperator(
                 hess_mv_fn,
@@ -368,7 +358,7 @@ class LineSearchNewton(AbstractNewtonMinimiser[Y, Aux]):
         rtol: float,
         atol: float,
         norm: Callable[[PyTree], Scalar] = max_norm,
-        linear_solver: lx.AbstractLinearSolver = lx.AutoLinearSolver(well_posed=None),
+        linear_solver: lx.AbstractLinearSolver = lx.Cholesky(),
         verbose: bool | Callable[..., None] = False,
     ):
         self.rtol = rtol
@@ -388,8 +378,11 @@ LineSearchNewton.__init__.__doc__ = """**Arguments:**
     includes three built-in norms: [`optimistix.max_norm`][],
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used to solve `H δ = -g`. Defaults to
-    `lineax.AutoLinearSolver(well_posed=None)`. For problems where the Hessian
-    is known to be positive definite, `lineax.Cholesky()` is faster.
+    `lineax.Cholesky()`, which requires the Hessian to carry
+    `positive_semidefinite_tag` (pass `tags=frozenset({lx.positive_semidefinite_tag})`
+    to `minimise` on globally-convex problems). For non-convex problems use
+    `lineax.AutoLinearSolver(well_posed=None)` or
+    [`optimistix.TruncatedCG`][] as the linear solver.
 - `verbose`: Whether to print out extra information about how the solve is
     proceeding. Can be `False`, `True`, or a callable `**kwargs -> None`.
 """
@@ -432,7 +425,7 @@ class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
         rtol: float,
         atol: float,
         norm: Callable[[PyTree], Scalar] = max_norm,
-        linear_solver: lx.AbstractLinearSolver = lx.AutoLinearSolver(well_posed=None),
+        linear_solver: lx.AbstractLinearSolver = lx.Cholesky(),
         use_steihaug: bool = False,
         steihaug_max_steps: int | None = None,
         verbose: bool | Callable[..., None] = False,
@@ -458,7 +451,9 @@ TrustNewton.__init__.__doc__ = """**Arguments:**
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used to solve the Newton system when
     `use_steihaug=False`. Ignored when `use_steihaug=True`. Defaults to
-    `lineax.AutoLinearSolver(well_posed=None)`.
+    `lineax.Cholesky()`, which requires the Hessian to carry
+    `positive_semidefinite_tag`. For non-convex problems use
+    `use_steihaug=True` or `lineax.AutoLinearSolver(well_posed=None)`.
 - `use_steihaug`: If `True`, use [`optimistix.SteihaugCGDescent`][] to solve
     the trust-region subproblem via truncated CG. This handles indefinite
     Hessians and is recommended for non-convex problems.

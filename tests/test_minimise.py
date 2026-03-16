@@ -17,10 +17,13 @@ from .helpers import (
     bowl,
     finite_difference_jvp,
     forward_only_fn_init_options_expected,
+    globally_convex,
     golden_search_fn_y0_options_expected,
     matyas,
     minimisation_fn_minima_init_args,
     minimisers,
+    _newton_needs_psd,
+    _spd_minimisation_fns,
     tree_allclose,
 )
 
@@ -34,6 +37,11 @@ smoke_aux = (jnp.ones((2, 3)), {"smoke_aux": jnp.ones(2)})
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise(solver, _fn, minimum, init, args, options):
+    needs_psd = _newton_needs_psd(solver)
+    if needs_psd and _fn not in _spd_minimisation_fns:
+        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
+    tags = frozenset({lx.positive_semidefinite_tag}) if needs_psd else frozenset()
+
     if isinstance(solver, optx.GradientDescent):
         max_steps = 100_000
     else:
@@ -58,6 +66,7 @@ def test_minimise(solver, _fn, minimum, init, args, options):
             options=options,
             max_steps=max_steps,
             throw=False,
+            tags=tags,
         ).value
     optx_min = _fn(optx_argmin, args)
     assert tree_allclose(optx_min, minimum, atol=atol, rtol=rtol)
@@ -69,6 +78,11 @@ def test_minimise(solver, _fn, minimum, init, args, options):
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
+    needs_psd = _newton_needs_psd(solver)
+    if needs_psd and _fn not in _spd_minimisation_fns:
+        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
+    tags = frozenset({lx.positive_semidefinite_tag}) if needs_psd else frozenset()
+
     if isinstance(solver, (optx.GradientDescent, optx.NonlinearCG)):
         max_steps = 100_000
         atol = rtol = 1e-2
@@ -102,6 +116,7 @@ def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
                 max_steps=max_steps,
                 adjoint=adjoint,
                 throw=False,
+                tags=tags,
             ).value
 
     otd = optx.ImplicitAdjoint()
@@ -208,11 +223,13 @@ def test_optax_recompilation():
 def test_forward_minimisation(fn, y0, options, expected, solver):
     if isinstance(solver, optx.OptaxMinimiser):  # No support for forward option
         return
-    else:
-        # Many steps because gradient descent takes ridiculously long
-        sol = optx.minimise(fn, solver, y0, options=options, max_steps=2**10)
-        assert sol.result == optx.RESULTS.successful
-        assert tree_allclose(sol.value, expected, atol=1e-4, rtol=1e-4)
+    if _newton_needs_psd(solver) and fn not in _spd_minimisation_fns:
+        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
+    tags = frozenset({lx.positive_semidefinite_tag}) if _newton_needs_psd(solver) else frozenset()
+    # Many steps because gradient descent takes ridiculously long
+    sol = optx.minimise(fn, solver, y0, options=options, max_steps=2**10, tags=tags)
+    assert sol.result == optx.RESULTS.successful
+    assert tree_allclose(sol.value, expected, atol=1e-4, rtol=1e-4)
 
 
 _golden = optx.GoldenSearch(rtol=1e-9, atol=1e-9)
@@ -235,68 +252,3 @@ def test_bfgs_float32():
     optx.root_find(f, optx.BFGS(rtol=1e-3, atol=1e-6), y0)
 
 
-# ---------------------------------------------------------------------------
-# Tests for PSD-tagged Hessian with Cholesky and CG linear solvers.
-#
-# `lx.Cholesky()` and `lx.CG()` both hard-fail at init time unless the
-# operator carries `positive_semidefinite_tag`.  In `second_order.py` the
-# Hessian operator is built as `frozenset({lx.symmetric_tag}) | tags`, so
-# `positive_semidefinite_tag` only makes it into the operator when the user
-# passes it explicitly to `minimise(tags=...)`.  These tests verify the
-# round-trip works correctly on a non-trivial (non-quadratic) problem.
-#
-# Function: f(y) = Σ_i (cosh(y_i) − 1)
-#   Hessian H = diag(cosh(y)) — strictly positive definite everywhere.
-#   Global minimum at y = 0,  f* = 0.
-#   Non-quadratic: requires ~30–40 Newton steps from the chosen starting point,
-#   unlike a pure quadratic which Cholesky would solve in a single step.
-# ---------------------------------------------------------------------------
-
-
-def _globally_convex(y, _):
-    """Non-quadratic globally convex function: f(y) = Σ cosh(y_i) − 1.
-
-    Hessian cosh(y) > 0 everywhere; unique minimum at y = 0, f* = 0.
-    """
-    return jnp.sum(jnp.cosh(y) - 1)
-
-
-_psd_solver_linear_solver_pairs = [
-    (optx.LineSearchNewton, lx.Cholesky()),
-    (optx.LineSearchNewton, lx.CG(rtol=1e-6, atol=0)),
-    (optx.TrustNewton, lx.Cholesky()),
-    (optx.TrustNewton, lx.CG(rtol=1e-6, atol=0)),
-]
-
-
-@pytest.mark.parametrize("solver_cls,linear_solver", _psd_solver_linear_solver_pairs)
-def test_newton_psd_linear_solver(solver_cls, linear_solver):
-    """Newton methods converge on a globally-convex non-quadratic problem when
-    Cholesky or CG is used as the linear solver.  Requires
-    `positive_semidefinite_tag` to flow from `minimise(tags=...)` into the
-    Hessian operator; also exercises the full non-trivial Newton trajectory
-    (Cholesky doesn't solve it in one step, unlike a pure quadratic bowl)."""
-    solver = solver_cls(1e-6, 1e-6, linear_solver=linear_solver)
-    y0 = jnp.array([4.0, -3.0, 2.0])
-    sol = optx.minimise(
-        _globally_convex,
-        solver,
-        y0,
-        tags=frozenset({lx.positive_semidefinite_tag}),
-    )
-    assert sol.result == optx.RESULTS.successful
-    # Check the function value at the returned point, not the argmin directly:
-    # TrustNewton terminates on |Δf| < atol which is satisfied once f ≈ 0,
-    # so f(y*) is tightly converged even when |y*| itself is only ~1e-4.
-    assert jnp.allclose(_globally_convex(sol.value, None), jnp.array(0.0), atol=1e-6)
-
-
-@pytest.mark.parametrize("solver_cls,linear_solver", _psd_solver_linear_solver_pairs)
-def test_newton_psd_linear_solver_no_tag_raises(solver_cls, linear_solver):
-    """Without `positive_semidefinite_tag`, the Hessian operator only carries
-    `symmetric_tag`, which is insufficient for Cholesky or CG — both raise a
-    `ValueError` at solver init time."""
-    solver = solver_cls(1e-6, 1e-6, linear_solver=linear_solver)
-    y0 = jnp.array([4.0, -3.0, 2.0])
-    with pytest.raises(Exception):
-        optx.minimise(_globally_convex, solver, y0)  # tags defaults to frozenset()
