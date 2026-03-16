@@ -54,7 +54,7 @@ from .._search import AbstractDescent, AbstractSearch, FunctionInfo
 from .._solution import RESULTS
 from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
-
+from .levenberg_marquardt import IndirectDampedNewtonDescent
 from .newton_chord import _NoAux
 from .quasi_newton import _NewtonMinimiserState, AbstractNewtonBase
 from .truncated_cg import TruncatedCG
@@ -410,11 +410,13 @@ class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
     `jax.grad` and [`lineax.JacobianLinearOperator`][], then the trust-region
     subproblem is solved. Two descent directions are supported:
 
-    - **`NewtonDescent`** (default): solves the full Newton system and scales the
-      step to fit within the trust region. Works well for convex problems.
+    - **`IndirectDampedNewtonDescent`** (default): solves the true trust-region
+      subproblem by root-finding for the Levenberg--Marquardt parameter λ such
+      that `‖(H + λI)⁻¹g‖ = Δ` (Conn, Gould, Toint §7.3). Handles indefinite
+      Hessians correctly by ensuring `H + λI` is positive definite.
     - **`SteihaugCGDescent`**: solves the trust-region subproblem approximately
-      via truncated CG. Handles indefinite Hessians gracefully, making it
-      suitable for **non-convex** problems. Never materialises the Hessian.
+      via truncated CG. Handles indefinite Hessians gracefully, never
+      materialises the Hessian, and is preferred for **large-scale** problems.
 
     To use `SteihaugCGDescent`, pass `use_steihaug=True`.
 
@@ -426,7 +428,7 @@ class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
     rtol: float
     atol: float
     norm: Callable[[PyTree], Scalar]
-    descent: NewtonDescent | SteihaugCGDescent
+    descent: IndirectDampedNewtonDescent | SteihaugCGDescent
     search: ClassicalTrustRegion
     verbose: Callable[..., None]
 
@@ -446,7 +448,7 @@ class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
         if use_steihaug:
             self.descent = SteihaugCGDescent(max_steps=steihaug_max_steps)
         else:
-            self.descent = NewtonDescent(linear_solver=linear_solver)
+            self.descent = IndirectDampedNewtonDescent(linear_solver=linear_solver)
         self.search = ClassicalTrustRegion()
         self.verbose = default_verbose(verbose)
 
@@ -459,10 +461,11 @@ TrustNewton.__init__.__doc__ = """**Arguments:**
     convergence criteria. Should be any function `PyTree -> Scalar`. Optimistix
     includes three built-in norms: [`optimistix.max_norm`][],
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
-- `linear_solver`: The linear solver used to solve the Newton system when
-    `use_steihaug=False`. Ignored when `use_steihaug=True`. Defaults to
-    `lineax.AutoLinearSolver(well_posed=True)`, using Cholesky for SPD Hessians
-    and LU otherwise. Use `use_steihaug=True` to handle indefinite Hessians.
+- `linear_solver`: The linear solver used inside `IndirectDampedNewtonDescent`
+    when `use_steihaug=False`. Ignored when `use_steihaug=True`. Defaults to
+    `lineax.AutoLinearSolver(well_posed=True)`, which dispatches to Cholesky
+    when the (shifted) Hessian carries `positive_semidefinite_tag` and LU
+    otherwise.
 - `use_steihaug`: If `True`, use [`optimistix.SteihaugCGDescent`][] to solve
     the trust-region subproblem via truncated CG. This handles indefinite
     Hessians and is recommended for non-convex problems.
