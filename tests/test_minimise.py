@@ -22,7 +22,6 @@ from .helpers import (
     matyas,
     minimisation_fn_minima_init_args,
     minimisers,
-    _newton_needs_convex,
     _spd_minimisation_fns,
     _uses_vanilla_cg,
     tree_allclose,
@@ -78,7 +77,7 @@ def test_minimise(solver, _fn, minimum, init, args, options):
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
-    if _newton_needs_convex(solver) and _fn not in _spd_minimisation_fns:
+    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
         return
     tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 
@@ -223,7 +222,7 @@ def test_optax_recompilation():
 def test_forward_minimisation(fn, y0, options, expected, solver):
     if isinstance(solver, optx.OptaxMinimiser):  # No support for forward option
         return
-    if _newton_needs_convex(solver) and fn not in _spd_minimisation_fns:
+    if _uses_vanilla_cg(solver) and fn not in _spd_minimisation_fns:
         return
     tags = frozenset({lx.positive_semidefinite_tag}) if fn in _spd_minimisation_fns else frozenset()
     # Many steps because gradient descent takes ridiculously long

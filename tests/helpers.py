@@ -598,20 +598,6 @@ def _uses_vanilla_cg(solver) -> bool:
     return isinstance(getattr(solver.descent, "linear_solver", None), lx.CG)
 
 
-def _newton_needs_convex(solver) -> bool:
-    """True for Newton with a direct linear solver (LU/Cholesky/CG).
-
-    These solvers may diverge or crash on non-convex problems. SteihaugCGDescent
-    and TruncatedCG handle indefinite Hessians and return False.
-    Used for JVP tests to avoid XLA compilation cache exhaustion.
-    """
-    if not isinstance(solver, (optx.LineSearchNewton, optx.TrustNewton)):
-        return False
-    if isinstance(solver.descent, optx.SteihaugCGDescent):
-        return False
-    if isinstance(getattr(solver.descent, "linear_solver", None), optx.TruncatedCG):
-        return False
-    return True
 
 # ROOT FIND/FIXED POINT PROBLEMS
 #
