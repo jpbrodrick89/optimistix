@@ -52,8 +52,9 @@ def _find_boundary_tau(
     ta = (-pd - sqrt_disc) / safe_dd  # smaller root
     tb = (-pd + sqrt_disc) / safe_dd  # larger root (= positive root)
     # For neg_curv: prefer ta when Δm(ta) < Δm(tb).
-    # (ta-tb)[γ + ½(ta+tb)·κ] < 0, with ta < tb so ta-tb < 0, giving:
-    prefer_ta = gamma + 0.5 * (ta + tb) * inner_prod > 0
+    # Δm(τ) = τγ + ½τ²κ with γ = r·d = -‖r‖² = -gamma (CG identity).
+    # prefer_ta iff (ta-tb)[-gamma + ½(ta+tb)·κ] < 0, with ta-tb < 0, giving:
+    prefer_ta = -gamma + 0.5 * (ta + tb) * inner_prod > 0
     tau_nc = jnp.where(prefer_ta, ta, tb)
     tau_bnd = jnp.maximum(tb, 0.0)
     return jnp.where(neg_curv, tau_nc, tau_bnd)

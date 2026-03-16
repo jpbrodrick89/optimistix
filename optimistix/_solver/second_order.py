@@ -61,16 +61,25 @@ from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
 
 
+def _grad_fn(fn: Fn[Y, Scalar, Aux], args: PyTree, autodiff_mode: str):
+    """Return a callable y -> gradient, honouring autodiff_mode."""
+    fn_no_aux = _NoAux(fn)
+    if autodiff_mode == "bwd":
+        return lambda _y: jax.grad(fn_no_aux)(_y, args)
+    else:
+        return lambda _y: jax.jacfwd(lambda y2: fn_no_aux(y2, args))(_y)
+
+
 def _make_hessian_f_info(
     fn: Fn[Y, Scalar, Aux],
     y: Y,
     args: PyTree,
     tags: frozenset[object],
+    *,
+    autodiff_mode: str = "bwd",
 ) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
     f_val, aux = fn(y, args)
-    grad, hess_mv_fn = jax.linearize(
-        lambda _y: jax.grad(_NoAux(fn))(_y, args), y
-    )
+    grad, hess_mv_fn = jax.linearize(_grad_fn(fn, args, autodiff_mode), y)
     hessian = lx.FunctionLinearOperator(
         hess_mv_fn, jax.eval_shape(lambda: y), frozenset({lx.symmetric_tag}) | tags
     )
@@ -235,8 +244,9 @@ class AbstractNewtonMinimiser(
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
     ) -> _NewtonMinimiserState:
+        autodiff_mode = options.get("autodiff_mode", "bwd")
         f_info_struct, _ = eqx.filter_eval_shape(
-            _make_hessian_f_info, fn, y, args, tags
+            _make_hessian_f_info, fn, y, args, tags, autodiff_mode=autodiff_mode
         )
         f_info = tree_full_like(f_info_struct, 0, allow_static=True)
         return _NewtonMinimiserState(
@@ -260,12 +270,12 @@ class AbstractNewtonMinimiser(
         state: _NewtonMinimiserState,
         tags: frozenset[object],
     ) -> tuple[Scalar, Aux, Callable[..., Any], None]:
+        autodiff_mode = options.get("autodiff_mode", "bwd")
         f_eval, aux_eval = fn(state.y_eval, args)
+        _gfn = _grad_fn(fn, args, autodiff_mode)
 
         def accepted(descent_state):
-            grad, hess_mv_fn = jax.linearize(
-                lambda _y: jax.grad(_NoAux(fn))(_y, args), state.y_eval
-            )
+            grad, hess_mv_fn = jax.linearize(_gfn, state.y_eval)
             hessian = lx.FunctionLinearOperator(
                 hess_mv_fn,
                 jax.eval_shape(lambda: state.y_eval),
