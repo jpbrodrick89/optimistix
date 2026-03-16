@@ -55,9 +55,17 @@ from .._solution import RESULTS
 from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
 
-from .quasi_newton import NewtonMinimiserState, AbstractNewtonBase
+from .quasi_newton import _NewtonMinimiserState, AbstractNewtonBase
 from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
+
+
+class _NoAux(eqx.Module):
+    fn: Callable
+
+    def __call__(self, y, args):
+        out, _ = self.fn(y, args)
+        return out
 
 
 def _make_hessian_f_info(
@@ -67,8 +75,9 @@ def _make_hessian_f_info(
     tags: frozenset[object],
 ) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
     f_val, aux = fn(y, args)
-    grad, hess_mv_fn, _ = jax.linearize(
-        lambda _y: jax.grad(fn, has_aux=True)(_y, args), y, has_aux=True
+    fn_no_aux = _NoAux(fn)
+    grad, hess_mv_fn = jax.linearize(
+        lambda _y: jax.grad(fn_no_aux)(_y, args), y
     )
     hessian = lx.FunctionLinearOperator(
         hess_mv_fn, jax.eval_shape(lambda: y), frozenset({lx.symmetric_tag}) | tags
@@ -191,7 +200,7 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 
 
 class AbstractNewtonMinimiser(
-    AbstractNewtonBase[Y, Aux, NewtonMinimiserState],
+    AbstractNewtonBase[Y, Aux, _NewtonMinimiserState],
     Generic[Y, Aux],
 ):
     """Abstract base class for exact second-order Newton minimisers.
@@ -233,12 +242,12 @@ class AbstractNewtonMinimiser(
         f_struct: jax.ShapeDtypeStruct,
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
-    ) -> NewtonMinimiserState:
+    ) -> _NewtonMinimiserState:
         f_info_struct, _ = eqx.filter_eval_shape(
             _make_hessian_f_info, fn, y, args, tags
         )
         f_info = tree_full_like(f_info_struct, 0, allow_static=True)
-        return NewtonMinimiserState(
+        return _NewtonMinimiserState(
             first_step=jnp.array(True),
             y_eval=y,
             search_state=self.search.init(y, f_info_struct),
@@ -256,14 +265,16 @@ class AbstractNewtonMinimiser(
         y: Y,
         args: PyTree,
         options: dict[str, Any],
-        state: NewtonMinimiserState,
+        state: _NewtonMinimiserState,
         tags: frozenset[object],
     ) -> tuple[Scalar, Aux, Callable[..., Any], None]:
         f_eval, aux_eval = fn(state.y_eval, args)
 
+        fn_no_aux = _NoAux(fn)
+
         def accepted(descent_state):
-            grad, hess_mv_fn, _ = jax.linearize(
-                lambda _y: jax.grad(fn, has_aux=True)(_y, args), state.y_eval, has_aux=True
+            grad, hess_mv_fn = jax.linearize(
+                lambda _y: jax.grad(fn_no_aux)(_y, args), state.y_eval
             )
             hessian = lx.FunctionLinearOperator(
                 hess_mv_fn,
@@ -298,7 +309,7 @@ class AbstractNewtonMinimiser(
 
     def _build_new_state(
         self,
-        old_state: NewtonMinimiserState,
+        old_state: _NewtonMinimiserState,
         y_eval: Y,
         search_state: Any,
         f_info: FunctionInfo.EvalGradHessian,
@@ -308,8 +319,8 @@ class AbstractNewtonMinimiser(
         result: RESULTS,
         accept: Bool[Array, ""],
         hessian_update_state: None,
-    ) -> NewtonMinimiserState:
-        return NewtonMinimiserState(
+    ) -> _NewtonMinimiserState:
+        return _NewtonMinimiserState(
             first_step=jnp.array(False),
             y_eval=y_eval,
             search_state=search_state,
