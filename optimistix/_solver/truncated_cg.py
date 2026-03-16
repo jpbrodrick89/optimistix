@@ -134,7 +134,7 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
         # Per-call overrides (Eisenstat-Walker, trust-region radius).
         rtol = options.get("rtol", self.rtol)
         atol = options.get("atol", self.atol)
-        delta = options.get("delta", jnp.inf)
+        delta = jnp.asarray(options.get("delta", jnp.inf))
         delta_sq = delta**2
 
         y0 = options.get("y0", tree_full_like(vector, 0))

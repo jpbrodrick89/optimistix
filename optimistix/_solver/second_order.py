@@ -54,30 +54,25 @@ from .._search import AbstractDescent, AbstractSearch, FunctionInfo
 from .._solution import RESULTS
 from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
-from .newton_chord import _NoAux
+
 from .quasi_newton import _NewtonBaseState, AbstractNewtonBase
 from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
 
 
-# Mirrors lineax's private _NoAuxIn; defined here to avoid importing private symbols.
-class _NoAuxIn(eqx.Module):
-    fn: Callable
-    args: Any
-
-    def __call__(self, y):
-        return self.fn(y, self.args)
-
-
 def _make_hessian_f_info(
-    hessian_grad_fn: _NoAuxIn,
     fn: Fn[Y, Scalar, Aux],
     y: Y,
     args: PyTree,
     tags: frozenset[object],
 ) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
     f_val, aux = fn(y, args)
-    grad, hess_mv_fn = jax.linearize(hessian_grad_fn, y)
+    # Use a plain lambda (not an eqx.Module) so that jax.grad's __wrapped__
+    # attribute points to a plain function rather than an equinox Module.
+    # Storing jax.grad(eqx_module) inside another eqx.Module triggers
+    # equinox's _JaxTransformException inside filter_custom_jvp traces.
+    grad_fn = lambda y: fn(y, args)[0]
+    grad, hess_mv_fn = jax.linearize(jax.grad(grad_fn), y)
     hessian = lx.FunctionLinearOperator(
         hess_mv_fn, jax.eval_shape(lambda: y), frozenset({lx.symmetric_tag}) | tags
     )
@@ -173,7 +168,7 @@ class SteihaugCGDescent(
         out = lx.linear_solve(
             H,
             jtu.tree_map(jnp.negative, g),
-            TruncatedCG(rtol=self.rtol, atol=0, max_steps=self.max_steps),
+            TruncatedCG(rtol=self.rtol, atol=0.0, max_steps=self.max_steps),
             options={"delta": delta, "rtol": ew_rtol},
             throw=False,
         )
@@ -202,8 +197,7 @@ class _NewtonMinimiserState(
     _NewtonBaseState[Y, Aux, SearchState, DescentState, FunctionInfo.EvalGradHessian],
     Generic[Y, Aux, SearchState, DescentState],
 ):
-    # Exact-Newton grad function: _NoAuxIn(jax.grad(_NoAux(fn)), args)
-    hessian_grad_fn: _NoAuxIn
+    pass
 
 
 class AbstractNewtonMinimiser(
@@ -250,13 +244,11 @@ class AbstractNewtonMinimiser(
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
     ) -> _NewtonMinimiserState:
-        hessian_grad_fn = _NoAuxIn(jax.grad(_NoAux(fn)), args)
         f_info_struct, _ = eqx.filter_eval_shape(
-            _make_hessian_f_info, hessian_grad_fn, fn, y, args, tags
+            _make_hessian_f_info, fn, y, args, tags
         )
         f_info = tree_full_like(f_info_struct, 0, allow_static=True)
         return _NewtonMinimiserState(
-            hessian_grad_fn=hessian_grad_fn,
             first_step=jnp.array(True),
             y_eval=y,
             search_state=self.search.init(y, f_info_struct),
@@ -280,7 +272,8 @@ class AbstractNewtonMinimiser(
         f_eval, aux_eval = fn(state.y_eval, args)
 
         def accepted(descent_state):
-            grad, hess_mv_fn = jax.linearize(state.hessian_grad_fn, state.y_eval)
+            grad_fn = lambda y: fn(y, args)[0]
+            grad, hess_mv_fn = jax.linearize(jax.grad(grad_fn), state.y_eval)
             hessian = lx.FunctionLinearOperator(
                 hess_mv_fn,
                 jax.eval_shape(lambda: state.y_eval),
@@ -326,7 +319,6 @@ class AbstractNewtonMinimiser(
         hessian_update_state: None,
     ) -> _NewtonMinimiserState:
         return _NewtonMinimiserState(
-            hessian_grad_fn=old_state.hessian_grad_fn,
             first_step=jnp.array(False),
             y_eval=y_eval,
             search_state=search_state,
