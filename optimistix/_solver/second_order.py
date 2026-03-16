@@ -133,7 +133,7 @@ class SteihaugCGDescent(
     Designed for use with [`optimistix.TrustNewton`][].
     """
 
-    max_steps: int = 100
+    max_steps: int | None = None
     rtol: float = 0.5
 
     def init(
@@ -182,9 +182,9 @@ class SteihaugCGDescent(
 
 SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 
-- `max_steps`: Maximum number of CG iterations. Defaults to 100. A larger value
-    gives a more accurate solution to the trust-region subproblem at the cost of
-    more Hessian-vector products per outer step.
+- `max_steps`: Maximum number of CG iterations per outer Newton step. Defaults
+    to `None`, which falls through to `TruncatedCG`'s default of `20 * n`.
+    Set explicitly to impose a hard cap (e.g. for large problems).
 - `rtol`: Upper bound for the Eisenstat-Walker forcing sequence. The inner CG
     terminates when `||r_j|| < eta_j * ||g||` where
     `eta_j = min(rtol, sqrt(||g||))`. At large `||g||` this caps at `rtol`
@@ -440,7 +440,7 @@ class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
         norm: Callable[[PyTree], Scalar] = max_norm,
         linear_solver: lx.AbstractLinearSolver = lx.AutoLinearSolver(well_posed=None),
         use_steihaug: bool = False,
-        steihaug_max_steps: int = 100,
+        steihaug_max_steps: int | None = None,
         verbose: bool | Callable[..., None] = False,
     ):
         self.rtol = rtol
@@ -468,8 +468,8 @@ TrustNewton.__init__.__doc__ = """**Arguments:**
 - `use_steihaug`: If `True`, use [`optimistix.SteihaugCGDescent`][] to solve
     the trust-region subproblem via truncated CG. This handles indefinite
     Hessians and is recommended for non-convex problems.
-- `steihaug_max_steps`: Maximum CG iterations per outer step when
-    `use_steihaug=True`. Defaults to 100.
+- `steihaug_max_steps`: Maximum CG iterations per outer Newton step when
+    `use_steihaug=True`. Defaults to `None` (`TruncatedCG` uses `20 * n`).
 - `verbose`: Whether to print out extra information about how the solve is
     proceeding. Can be `False`, `True`, or a callable `**kwargs -> None`.
 """

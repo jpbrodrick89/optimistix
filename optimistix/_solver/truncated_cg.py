@@ -23,37 +23,25 @@ from lineax._solution import RESULTS as _lxRESULTS
 from .._misc import tree_dot, tree_full_like, tree_where
 
 
-def _find_boundary_tau(p: Any, d: Any, delta_sq: Scalar) -> Scalar:
-    """Find τ ≥ 0 such that ‖p + τ d‖² = delta_sq.
-
-    Solves the positive root of the quadratic ‖p + τd‖² = Δ²,
-    i.e. τ = (-p·d + sqrt((p·d)² - ‖d‖²(‖p‖² - Δ²))) / ‖d‖²
-
-    Used for the boundary-crossing exit, where we always step forward.
-    """
-    pd = cast(Scalar, tree_dot(p, d))
-    dd = cast(Scalar, tree_dot(d, d))
-    pp = cast(Scalar, tree_dot(p, p))
-    disc = pd**2 - dd * (pp - delta_sq)
-    safe_dd = jnp.where(dd > jnp.finfo(dd.dtype).eps, dd, 1.0)
-    tau = (-pd + jnp.sqrt(jnp.maximum(disc, 0.0))) / safe_dd
-    return jnp.maximum(tau, 0.0)
-
-
-def _find_neg_curv_boundary_tau(
-    p: Any, d: Any, delta_sq: Scalar, gamma: Scalar, inner_prod: Scalar
+def _find_boundary_tau(
+    p: Any,
+    d: Any,
+    delta_sq: Scalar,
+    neg_curv: Bool[Array, ""],
+    gamma: Scalar,
+    inner_prod: Scalar,
 ) -> Scalar:
-    """Find the boundary τ that minimises the quadratic model for neg-curv exits.
+    """Find the boundary τ such that ‖p + τ d‖² = delta_sq.
 
-    Computes both intersections of {p + τd} with the trust-region sphere and
-    returns the τ that gives the smaller quadratic model value.
+    For boundary-crossing exits (`neg_curv=False`): returns the positive root
+    (forward step along d).
 
-    The change in model value along τ is Δm(τ) = τ·γ + ½τ²·inner_prod, using
-    the CG conjugacy identity r·d = -‖r‖² = -γ (exact in CG).  With
-    inner_prod ≤ 0, the parabola opens downward; we pick the endpoint further
-    from the vertex — matching scipy's trust-ncg boundary selection.
-
-    Unlike _find_boundary_tau, τ may be negative (stepping backward along d).
+    For negative-curvature exits (`neg_curv=True`): computes both roots ta ≤ tb
+    and returns the one that minimises the quadratic model Δm(τ) = τγ + ½τ²κ,
+    using the CG conjugacy identity r·d = -‖r‖² = -γ.  With κ = inner_prod ≤ 0
+    the parabola opens downward so the minimum is at the endpoint further from
+    the vertex — matching scipy's trust-ncg boundary selection.  τ may be
+    negative (stepping backward along d).
     """
     pd = cast(Scalar, tree_dot(p, d))
     dd = cast(Scalar, tree_dot(d, d))
@@ -62,11 +50,13 @@ def _find_neg_curv_boundary_tau(
     sqrt_disc = jnp.sqrt(jnp.maximum(disc, 0.0))
     safe_dd = jnp.where(dd > jnp.finfo(dd.dtype).eps, dd, 1.0)
     ta = (-pd - sqrt_disc) / safe_dd  # smaller root
-    tb = (-pd + sqrt_disc) / safe_dd  # larger root
-    # Prefer ta when Δm(ta) < Δm(tb):
-    #   (ta-tb)[γ + ½(ta+tb)·inner_prod] < 0, and ta < tb, so ta-tb < 0, giving:
+    tb = (-pd + sqrt_disc) / safe_dd  # larger root (= positive root)
+    # For neg_curv: prefer ta when Δm(ta) < Δm(tb).
+    # (ta-tb)[γ + ½(ta+tb)·κ] < 0, with ta < tb so ta-tb < 0, giving:
     prefer_ta = gamma + 0.5 * (ta + tb) * inner_prod > 0
-    return jnp.where(prefer_ta, ta, tb)
+    tau_nc = jnp.where(prefer_ta, ta, tb)
+    tau_bnd = jnp.maximum(tb, 0.0)
+    return jnp.where(neg_curv, tau_nc, tau_bnd)
 
 
 _TruncatedCGState: TypeAlias = lx.AbstractLinearOperator
@@ -152,7 +142,7 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
         leaves, _ = jtu.tree_flatten(vector)
         size = sum(leaf.size for leaf in leaves)
         if self.max_steps is None:
-            max_steps = 10 * size  # match lineax.CG default
+            max_steps = 20 * size  # match scipy Newton-CG (cg_maxiter = 20*n)
         else:
             max_steps = self.max_steps
 
@@ -258,15 +248,11 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
             first_step_linesearch_fallback = y_is_zero & neg_curv & jnp.isinf(delta)
             y_before = tree_where(first_step_linesearch_fallback, cg_state.d, cg_state.y)
 
-            # Boundary-crossing exit: always step forward (positive root).
-            tau_bnd = _find_boundary_tau(cg_state.y, cg_state.d, delta_sq)
-            # Negative-curvature exit: evaluate both boundary roots and pick the
-            # one that minimises the quadratic model, matching scipy's trust-ncg.
-            # Uses r·d = -γ (CG conjugacy identity) to avoid an extra dot product.
-            tau_nc = _find_neg_curv_boundary_tau(
-                cg_state.y, cg_state.d, delta_sq, cg_state.gamma, inner_prod
+            # Boundary-crossing: forward root. Neg-curv: best of both roots.
+            # Uses r·d = -γ (CG conjugacy identity) to pick without extra HVP.
+            tau = _find_boundary_tau(
+                cg_state.y, cg_state.d, delta_sq, neg_curv, cg_state.gamma, inner_prod
             )
-            tau = jnp.where(neg_curv, tau_nc, tau_bnd)
             y_projected = (cg_state.y**ω + tau * cg_state.d**ω).ω
 
             y_exit = tree_where(done_now, y_before, y_new)
@@ -355,7 +341,8 @@ TruncatedCG.__init__.__doc__ = """**Arguments:**
 - `norm`: The norm to use for convergence checking. Defaults to `lineax.max_norm`.
 - `stabilise_every`: Recompute the residual exactly every this many steps to
     correct floating-point drift. Matches `lineax.CG` default of 10.
-- `max_steps`: Maximum number of CG iterations. Defaults to `10 * n` (matching
-    `lineax.CG`). At max_steps the solve returns `RESULTS.singular` (if
-    `max_steps` was inferred) or `RESULTS.max_steps_reached` (if set explicitly).
+- `max_steps`: Maximum number of CG iterations. Defaults to `20 * n` (matching
+    scipy's Newton-CG `cg_maxiter = 20*n`). At max_steps the solve returns
+    `RESULTS.singular` (if `max_steps` was inferred) or
+    `RESULTS.max_steps_reached` (if set explicitly).
 """
