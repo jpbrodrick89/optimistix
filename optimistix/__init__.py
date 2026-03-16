@@ -82,6 +82,7 @@ from ._solver import (
     SteepestDescent as SteepestDescent,
     SteihaugCGDescent as SteihaugCGDescent,
     TrustNewton as TrustNewton,
+    TruncatedCG as TruncatedCG,
 )
 
 

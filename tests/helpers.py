@@ -261,6 +261,13 @@ _general_minimisers = (
 )
 
 _minim_only = (
+    # Exact-Hessian Newton solvers. LineSearchNewton and TrustNewton with
+    # NewtonDescent require a (near-)PSD Hessian; TrustNewton with
+    # use_steihaug=True handles indefinite Hessians via truncated CG.
+    optx.LineSearchNewton(rtol, atol),
+    optx.LineSearchNewton(rtol, atol, linear_solver=optx.TruncatedCG(rtol=0.5)),
+    optx.TrustNewton(rtol, atol),
+    optx.TrustNewton(rtol, atol, use_steihaug=True),
     BFGSClassicalTrustRegionHessian(rtol, atol),
     BFGSLinearTrustRegionHessian(rtol, atol),
     BFGSLinearTrustRegion(rtol, atol),

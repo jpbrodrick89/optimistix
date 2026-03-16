@@ -52,6 +52,7 @@ from .second_order import (
     SteihaugCGDescent as SteihaugCGDescent,
     TrustNewton as TrustNewton,
 )
+from .truncated_cg import TruncatedCG as TruncatedCG
 from .trust_region import (
     ClassicalTrustRegion as ClassicalTrustRegion,
     LinearTrustRegion as LinearTrustRegion,
