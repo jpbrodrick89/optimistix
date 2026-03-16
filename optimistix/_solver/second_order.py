@@ -414,30 +414,6 @@ class AbstractNewtonMinimiser(
             num_accepted_steps=old_state.num_accepted_steps + jnp.where(accept, 1, 0),
         )
 
-    def terminate(
-        self,
-        fn: Fn[Y, Scalar, Aux],
-        y: Y,
-        args: PyTree,
-        options: dict[str, Any],
-        state: _NewtonMinimiserState,
-        tags: frozenset[object],
-    ) -> tuple[Bool[Array, ""], RESULTS]:
-        return state.terminate, state.result
-
-    def postprocess(
-        self,
-        fn: Fn[Y, Scalar, Aux],
-        y: Y,
-        aux: Aux,
-        args: PyTree,
-        options: dict[str, Any],
-        state: _NewtonMinimiserState,
-        tags: frozenset[object],
-        result: RESULTS,
-    ) -> tuple[Y, Aux, dict[str, Any]]:
-        return y, aux, {}
-
 
 # ---------------------------------------------------------------------------
 # LineSearchNewton

@@ -117,9 +117,9 @@ class AbstractNewtonBase(
 ):
     """Abstract base class shared by exact-Newton and quasi-Newton minimisers.
 
-    Provides the common `AbstractVar` declarations and a concrete `step`
-    implementation used by both exact-Newton and quasi-Newton minimisers.
-    Subclasses must implement `init`, `terminate`, `postprocess`, and the
+    Provides the common `AbstractVar` declarations and concrete `step`,
+    `terminate`, and `postprocess` implementations used by both exact-Newton
+    and quasi-Newton minimisers. Subclasses must implement `init` and the
     two abstract hooks `_prepare_step` and `_build_new_state`.
     """
 
@@ -234,6 +234,30 @@ class AbstractNewtonBase(
             hessian_update_state,
         )
         return y, state, prev_aux
+
+    def terminate(
+        self,
+        fn: Fn[Y, Scalar, Aux],
+        y: Y,
+        args: PyTree,
+        options: dict[str, Any],
+        state: _BoundNewtonState,
+        tags: frozenset[object],
+    ) -> tuple[Bool[Array, ""], RESULTS]:
+        return state.terminate, state.result
+
+    def postprocess(
+        self,
+        fn: Fn[Y, Scalar, Aux],
+        y: Y,
+        aux: Aux,
+        args: PyTree,
+        options: dict[str, Any],
+        state: _BoundNewtonState,
+        tags: frozenset[object],
+        result: RESULTS,
+    ) -> tuple[Y, Aux, dict[str, Any]]:
+        return y, aux, {}
 
 
 class AbstractQuasiNewton(
@@ -404,30 +428,6 @@ class AbstractQuasiNewton(
             num_accepted_steps=old_state.num_accepted_steps + jnp.where(accept, 1, 0),
             hessian_update_state=hessian_update_state,
         )
-
-    def terminate(
-        self,
-        fn: Fn[Y, Scalar, Aux],
-        y: Y,
-        args: PyTree,
-        options: dict[str, Any],
-        state: _QuasiNewtonState,
-        tags: frozenset[object],
-    ) -> tuple[Bool[Array, ""], RESULTS]:
-        return state.terminate, state.result
-
-    def postprocess(
-        self,
-        fn: Fn[Y, Scalar, Aux],
-        y: Y,
-        aux: Aux,
-        args: PyTree,
-        options: dict[str, Any],
-        state: _QuasiNewtonState,
-        tags: frozenset[object],
-        result: RESULTS,
-    ) -> tuple[Y, Aux, dict[str, Any]]:
-        return y, aux, {}
 
 
 class AbstractBFGS(AbstractQuasiNewton[Y, Aux, _Hessian, None]):
