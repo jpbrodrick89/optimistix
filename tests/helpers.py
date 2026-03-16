@@ -258,9 +258,6 @@ _general_minimisers = (
     optx.OptaxMinimiser(optax.adam(learning_rate=3e-3), rtol=rtol, atol=atol),
     # optax.lbfgs includes their linesearch by default
     optx.OptaxMinimiser(optax.lbfgs(), rtol=rtol, atol=atol),
-)
-
-_minim_only = (
     # Exact-Hessian Newton solvers. LineSearchNewton and TrustNewton with
     # NewtonDescent require a (near-)PSD Hessian; TrustNewton with
     # use_steihaug=True handles indefinite Hessians via truncated CG.
@@ -268,6 +265,9 @@ _minim_only = (
     optx.LineSearchNewton(rtol, atol, linear_solver=optx.TruncatedCG(rtol=0.5, atol=0.0)),
     optx.TrustNewton(rtol, atol),
     optx.TrustNewton(rtol, atol, use_steihaug=True),
+)
+
+_minim_only = (
     BFGSClassicalTrustRegionHessian(rtol, atol),
     BFGSLinearTrustRegionHessian(rtol, atol),
     BFGSLinearTrustRegion(rtol, atol),

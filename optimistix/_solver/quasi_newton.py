@@ -82,7 +82,7 @@ def _outer(tree1, tree2):
     return jtu.tree_map(leaf_fn, tree1)
 
 
-class _NewtonBaseState(
+class NewtonMinimiserState(
     eqx.Module,
     Generic[Y, Aux, SearchState, DescentState, _Hessian],
 ):
@@ -102,14 +102,14 @@ class _NewtonBaseState(
 
 
 class _QuasiNewtonState(
-    _NewtonBaseState[Y, Aux, SearchState, DescentState, _Hessian],
+    NewtonMinimiserState[Y, Aux, SearchState, DescentState, _Hessian],
     Generic[Y, Aux, SearchState, DescentState, _Hessian, HessianUpdateState],
 ):
     # Quasi-Newton Hessian approximation update state
     hessian_update_state: HessianUpdateState
 
 
-_BoundNewtonState = TypeVar("_BoundNewtonState", bound=_NewtonBaseState)
+_BoundNewtonState = TypeVar("_BoundNewtonState", bound=NewtonMinimiserState)
 
 
 class AbstractNewtonBase(

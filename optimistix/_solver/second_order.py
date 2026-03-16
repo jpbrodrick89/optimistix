@@ -41,7 +41,7 @@ from equinox import AbstractVar
 from equinox.internal import ω
 from jaxtyping import Array, Bool, PyTree, Scalar
 
-from .._custom_types import Aux, DescentState, Fn, SearchState, Y
+from .._custom_types import Aux, Fn, Y
 from .._misc import (
     cauchy_termination,
     default_verbose,
@@ -55,7 +55,7 @@ from .._solution import RESULTS
 from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
 
-from .quasi_newton import _NewtonBaseState, AbstractNewtonBase
+from .quasi_newton import NewtonMinimiserState, AbstractNewtonBase
 from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
 
@@ -67,12 +67,9 @@ def _make_hessian_f_info(
     tags: frozenset[object],
 ) -> tuple[FunctionInfo.EvalGradHessian, Aux]:
     f_val, aux = fn(y, args)
-    # Use a plain lambda (not an eqx.Module) so that jax.grad's __wrapped__
-    # attribute points to a plain function rather than an equinox Module.
-    # Storing jax.grad(eqx_module) inside another eqx.Module triggers
-    # equinox's _JaxTransformException inside filter_custom_jvp traces.
-    grad_fn = lambda y: fn(y, args)[0]
-    grad, hess_mv_fn = jax.linearize(jax.grad(grad_fn), y)
+    grad, hess_mv_fn, _ = jax.linearize(
+        lambda _y: jax.grad(fn, has_aux=True)(_y, args), y, has_aux=True
+    )
     hessian = lx.FunctionLinearOperator(
         hess_mv_fn, jax.eval_shape(lambda: y), frozenset({lx.symmetric_tag}) | tags
     )
@@ -193,15 +190,8 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 # ---------------------------------------------------------------------------
 
 
-class _NewtonMinimiserState(
-    _NewtonBaseState[Y, Aux, SearchState, DescentState, FunctionInfo.EvalGradHessian],
-    Generic[Y, Aux, SearchState, DescentState],
-):
-    pass
-
-
 class AbstractNewtonMinimiser(
-    AbstractNewtonBase[Y, Aux, _NewtonMinimiserState],
+    AbstractNewtonBase[Y, Aux, NewtonMinimiserState],
     Generic[Y, Aux],
 ):
     """Abstract base class for exact second-order Newton minimisers.
@@ -243,12 +233,12 @@ class AbstractNewtonMinimiser(
         f_struct: jax.ShapeDtypeStruct,
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
-    ) -> _NewtonMinimiserState:
+    ) -> NewtonMinimiserState:
         f_info_struct, _ = eqx.filter_eval_shape(
             _make_hessian_f_info, fn, y, args, tags
         )
         f_info = tree_full_like(f_info_struct, 0, allow_static=True)
-        return _NewtonMinimiserState(
+        return NewtonMinimiserState(
             first_step=jnp.array(True),
             y_eval=y,
             search_state=self.search.init(y, f_info_struct),
@@ -266,14 +256,15 @@ class AbstractNewtonMinimiser(
         y: Y,
         args: PyTree,
         options: dict[str, Any],
-        state: _NewtonMinimiserState,
+        state: NewtonMinimiserState,
         tags: frozenset[object],
     ) -> tuple[Scalar, Aux, Callable[..., Any], None]:
         f_eval, aux_eval = fn(state.y_eval, args)
 
         def accepted(descent_state):
-            grad_fn = lambda y: fn(y, args)[0]
-            grad, hess_mv_fn = jax.linearize(jax.grad(grad_fn), state.y_eval)
+            grad, hess_mv_fn, _ = jax.linearize(
+                lambda _y: jax.grad(fn, has_aux=True)(_y, args), state.y_eval, has_aux=True
+            )
             hessian = lx.FunctionLinearOperator(
                 hess_mv_fn,
                 jax.eval_shape(lambda: state.y_eval),
@@ -307,7 +298,7 @@ class AbstractNewtonMinimiser(
 
     def _build_new_state(
         self,
-        old_state: _NewtonMinimiserState,
+        old_state: NewtonMinimiserState,
         y_eval: Y,
         search_state: Any,
         f_info: FunctionInfo.EvalGradHessian,
@@ -317,8 +308,8 @@ class AbstractNewtonMinimiser(
         result: RESULTS,
         accept: Bool[Array, ""],
         hessian_update_state: None,
-    ) -> _NewtonMinimiserState:
-        return _NewtonMinimiserState(
+    ) -> NewtonMinimiserState:
+        return NewtonMinimiserState(
             first_step=jnp.array(False),
             y_eval=y_eval,
             search_state=search_state,
