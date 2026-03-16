@@ -71,8 +71,8 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
     truncation strategy used by scipy's Newton-CG method.
 
     On the first CG step, if negative curvature is detected before any progress has
-    been made (iterate is still zero), the initial residual direction (equal to the
-    negative gradient for Newton problems) is returned as a steepest-descent fallback.
+    been made (iterate is still zero), a Cauchy-scaled steepest-descent step
+    `‖g‖² / |d^T H d| · (-g)` is returned, matching scipy's Newton-CG fallback.
 
     Supports the following `options` (passed to `lx.linear_solve(..., options=...)`):
 
@@ -246,7 +246,14 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
 
             y_is_zero = cast(Scalar, tree_dot(cg_state.y, cg_state.y)) <= 0
             first_step_linesearch_fallback = y_is_zero & neg_curv & jnp.isinf(delta)
-            y_before = tree_where(first_step_linesearch_fallback, cg_state.d, cg_state.y)
+            # Scipy scaling: return γ / |d^T H d| · d = ‖g‖² / |curv| · (-g),
+            # the Cauchy point along -g that matches the curvature magnitude.
+            # This lets Armijo start from alpha=1 and accept immediately rather
+            # than backtracking from an unscaled unit direction.
+            # Guard: when inner_prod ≈ 0 (barely neg-curv) avoid a huge step.
+            safe_neg_inner = jnp.maximum(-inner_prod, jnp.finfo(inner_prod.dtype).eps)
+            cauchy_d = (cg_state.gamma / safe_neg_inner * cg_state.d**ω).ω
+            y_before = tree_where(first_step_linesearch_fallback, cauchy_d, cg_state.y)
 
             # Boundary-crossing: forward root. Neg-curv: best of both roots.
             # Uses r·d = -γ (CG conjugacy identity) to pick without extra HVP.
@@ -273,8 +280,9 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
             )
 
         # Initialise result_y to r0 (= -g for Newton-CG) so that if max_steps=0
-        # or negative curvature fires on the very first step (y=0), we return the
-        # steepest-descent direction rather than a zero vector.
+        # the loop is skipped entirely and we still return a useful fallback.
+        # The actual first-step neg_curv fallback (Cauchy-scaled) is computed in
+        # body_fun and overwrites this via result_y_now.
         init_state = _CGState(
             diff=ω(y0).call(lambda x: jnp.full_like(x, jnp.inf)).ω,
             y=y0,
