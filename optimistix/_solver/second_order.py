@@ -117,8 +117,9 @@ class SteihaugCGDescent(
        extended to the trust-region boundary and returned.
     2. **Boundary hit**: the unconstrained CG step would leave the trust region.
        The step is projected back onto the boundary and returned.
-    3. **CG convergence**: `||r_j|| < rtol * ||g||`. The current iterate is
-       returned.
+    3. **CG convergence**: `||r_j|| < eta_j * ||g||` where
+       `eta_j = min(rtol, sqrt(||g||))` is the Eisenstat-Walker forcing sequence.
+       The current iterate is returned.
 
     Hessian-vector products are computed lazily via forward-over-reverse AD
     (`jax.jvp` of the gradient), so the full Hessian is never materialised.
@@ -159,6 +160,12 @@ class SteihaugCGDescent(
         H = state.f_info.hessian
         delta = state.grad_norm * step_size
 
+        # Eisenstat-Walker: tighten the inner CG tolerance as ||g|| → 0.
+        # ew_rtol = min(rtol, sqrt(||g||)) gives the adaptive forcing sequence.
+        # At large ||g|| this caps at self.rtol (0.5 by default); as the outer
+        # iterate converges the inner solve is tightened automatically.
+        ew_rtol = jnp.minimum(jnp.array(self.rtol), jnp.sqrt(state.grad_norm))
+
         # TruncatedCG solves H p = -g.  With a finite delta it handles both
         # early exits (negative curvature and boundary crossing) internally,
         # projecting onto the trust-region sphere and returning the result
@@ -167,7 +174,7 @@ class SteihaugCGDescent(
             H,
             jtu.tree_map(jnp.negative, g),
             TruncatedCG(rtol=self.rtol, atol=0, max_steps=self.max_steps),
-            options={"delta": delta},
+            options={"delta": delta, "rtol": ew_rtol},
             throw=False,
         )
         return out.value, RESULTS.successful
@@ -178,9 +185,11 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 - `max_steps`: Maximum number of CG iterations. Defaults to 100. A larger value
     gives a more accurate solution to the trust-region subproblem at the cost of
     more Hessian-vector products per outer step.
-- `rtol`: Relative tolerance for CG convergence. CG terminates when
-    `||r_j|| < rtol * ||g||`. Defaults to 0.5, which corresponds to an inexact
-    Newton step (the "forcing sequence" approach).
+- `rtol`: Upper bound for the Eisenstat-Walker forcing sequence. The inner CG
+    terminates when `||r_j|| < eta_j * ||g||` where
+    `eta_j = min(rtol, sqrt(||g||))`. At large `||g||` this caps at `rtol`
+    (coarse inner solve); as `||g|| → 0` the inner tolerance is tightened
+    automatically, matching scipy's trust-ncg behaviour. Defaults to 0.5.
 """
 
 
