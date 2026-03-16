@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
+import lineax as lx
 import optax
 import optimistix as optx
 import pytest
@@ -232,3 +233,64 @@ def test_bfgs_float32():
 
     y0 = jnp.array(1.0, dtype=jnp.float32)
     optx.root_find(f, optx.BFGS(rtol=1e-3, atol=1e-6), y0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for PSD-tagged Hessian linear solvers (Cholesky and CG).
+#
+# `lx.Cholesky()` and `lx.CG()` both hard-fail at init time unless the
+# operator carries `positive_semidefinite_tag`.  In `second_order.py` the
+# Hessian operator is built as `frozenset({lx.symmetric_tag}) | tags`, so
+# `positive_semidefinite_tag` only makes it into the operator when the user
+# passes it explicitly to `minimise(tags=...)`.  These tests verify that the
+# round-trip works correctly.
+#
+# Function: f(y) = Σ_i (i+1)(y_i − i)²
+#   Hessian H = 2·diag(1,2,…,n)  — strictly positive definite everywhere.
+#   Unique minimum at y_i = i,  f* = 0.
+# ---------------------------------------------------------------------------
+
+
+def _psd_quadratic(y, _):
+    """Strictly convex quadratic with PSD Hessian and non-trivial minimum."""
+    n = y.size
+    weights = jnp.arange(1, n + 1, dtype=y.dtype)
+    centers = jnp.arange(n, dtype=y.dtype)
+    return jnp.dot(weights, (y - centers) ** 2)
+
+
+_psd_solver_linear_solver_pairs = [
+    (optx.LineSearchNewton, lx.Cholesky()),
+    (optx.LineSearchNewton, lx.CG(rtol=1e-8, atol=0)),
+    (optx.TrustNewton, lx.Cholesky()),
+    (optx.TrustNewton, lx.CG(rtol=1e-8, atol=0)),
+]
+
+
+@pytest.mark.parametrize("solver_cls,linear_solver", _psd_solver_linear_solver_pairs)
+def test_newton_psd_linear_solver(solver_cls, linear_solver):
+    """Newton methods converge on a PSD-Hessian problem when Cholesky or CG is
+    used as the linear solver.  This requires `positive_semidefinite_tag` to
+    flow from `minimise(tags=...)` into the Hessian operator."""
+    solver = solver_cls(1e-6, 1e-6, linear_solver=linear_solver)
+    y0 = jnp.array([3.0, -1.0, 5.0])
+    sol = optx.minimise(
+        _psd_quadratic,
+        solver,
+        y0,
+        tags=frozenset({lx.positive_semidefinite_tag}),
+    )
+    assert sol.result == optx.RESULTS.successful
+    expected = jnp.array([0.0, 1.0, 2.0])
+    assert jnp.allclose(sol.value, expected, atol=1e-5)
+
+
+@pytest.mark.parametrize("solver_cls,linear_solver", _psd_solver_linear_solver_pairs)
+def test_newton_psd_linear_solver_no_tag_raises(solver_cls, linear_solver):
+    """Without `positive_semidefinite_tag`, the Hessian operator only carries
+    `symmetric_tag`, which is insufficient for Cholesky or CG — both raise a
+    `ValueError` at solver init time."""
+    solver = solver_cls(1e-6, 1e-6, linear_solver=linear_solver)
+    y0 = jnp.array([3.0, -1.0, 5.0])
+    with pytest.raises(Exception):
+        optx.minimise(_psd_quadratic, solver, y0)  # tags defaults to frozenset()
