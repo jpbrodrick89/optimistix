@@ -141,8 +141,9 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
             gamma: Scalar   # r^T r
             step: Scalar
             done: Bool[Array, ""]           # neg_curv or boundary exit fired
-            neg_curv: Bool[Array, ""]       # specifically negative curvature exit
-            result_y: Any   # iterate to return at exit
+            neg_curv: Bool[Array, ""]       # negative curvature exit
+            hit_boundary: Bool[Array, ""]   # trust-region boundary exit
+            result_y: Any   # iterate to return at exit (y_before for early exits)
             result_d: Any   # CG direction at exit (for boundary projection)
 
         def cond_fun(cg_state: _CGState) -> Bool[Array, ""]:
@@ -197,15 +198,20 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
             d_new = (r_new**ω + beta * cg_state.d**ω).ω
 
             # Determine what to return if we exit here.
-            #   neg_curv: return y before the bad step; if y=0 (first step) fall back
-            #             to the initial residual direction d (= r0 = -g).
-            #   boundary: return y_new (the crossing point).
-            #   neither:  return y_new (convergence or continuing).
+            #
+            # Both early exits (neg_curv and boundary) return y_before so the
+            # caller can do boundary projection via  y_before + tau*d.
+            #
+            # Exception: when there is no trust region (delta=inf, i.e. Newton-CG
+            # line-search mode) and neg_curv fires on the very first step (y=0),
+            # return d (= r0 = -g) instead of the zero vector, so the Armijo line
+            # search has a non-trivial descent direction to work with.
             y_is_zero = cast(Scalar, tree_dot(cg_state.y, cg_state.y)) <= 0
-            neg_curv_result = tree_where(y_is_zero, cg_state.d, cg_state.y)
-            result_y_now = tree_where(neg_curv, neg_curv_result, y_new)
+            first_step_linesearch_fallback = y_is_zero & neg_curv & jnp.isinf(delta)
+            y_before = tree_where(first_step_linesearch_fallback, cg_state.d, cg_state.y)
 
             done_now = neg_curv | hit_boundary
+            result_y_now = tree_where(done_now, y_before, y_new)
 
             return _CGState(
                 diff=diff,
@@ -216,6 +222,7 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
                 step=cg_state.step + 1,
                 done=done_now,
                 neg_curv=neg_curv,
+                hit_boundary=hit_boundary,
                 result_y=result_y_now,
                 result_d=cg_state.d,
             )
@@ -232,6 +239,7 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
             step=jnp.array(0),
             done=jnp.array(False),
             neg_curv=jnp.array(False),
+            hit_boundary=jnp.array(False),
             result_y=r0,
             result_d=d0,
         )
@@ -260,6 +268,7 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
             "num_steps": final.step,
             "max_steps": jnp.array(max_steps),
             "negative_curvature": final.neg_curv,
+            "hit_boundary": final.hit_boundary,
             "direction": final.result_d,
         }
         return solution, result, stats

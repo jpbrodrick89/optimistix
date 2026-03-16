@@ -34,7 +34,6 @@ from typing import Any, cast, Generic
 
 import equinox as eqx
 import jax
-import jax.lax as lax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import lineax as lx
@@ -58,6 +57,7 @@ from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
 from .newton_chord import _NoAux
 from .quasi_newton import _NewtonBaseState, AbstractNewtonBase
+from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
 
 
@@ -88,6 +88,17 @@ def _make_hessian_f_info(
 # ---------------------------------------------------------------------------
 # SteihaugCGDescent
 # ---------------------------------------------------------------------------
+
+
+def _find_boundary_tau(p: Any, d: Any, delta_sq: Scalar) -> Scalar:
+    """Find τ ≥ 0 such that ‖p + τ d‖² = delta_sq."""
+    pd = cast(Scalar, tree_dot(p, d))
+    dd = cast(Scalar, tree_dot(d, d))
+    pp = cast(Scalar, tree_dot(p, p))
+    disc = pd**2 - dd * (pp - delta_sq)
+    safe_dd = jnp.where(dd > jnp.finfo(dd.dtype).eps, dd, 1.0)
+    tau = (-pd + jnp.sqrt(jnp.maximum(disc, 0.0))) / safe_dd
+    return jnp.maximum(tau, 0.0)
 
 
 class _SteihaugCGDescentState(eqx.Module, Generic[Y]):
@@ -157,105 +168,29 @@ class SteihaugCGDescent(
     ) -> tuple[Y, RESULTS]:
         g = state.f_info.grad
         H = state.f_info.hessian
+        delta = state.grad_norm * step_size
+        delta_sq = delta**2
 
-        delta_sq = (state.grad_norm * step_size) ** 2
-        r0_norm_sq = cast(Array, tree_dot(g, g))
-        tol_sq = (self.rtol**2) * r0_norm_sq
-
-        p0 = tree_full_like(g, 0)
-        r0 = g
-        d0 = jtu.tree_map(jnp.negative, g)
-
-        class _CGState(eqx.Module):
-            p: Any
-            r: Any
-            d: Any
-            rr: Scalar
-            result_p: Any  # committed output once done
-            done: Bool[Array, ""]
-
-        def _find_boundary_tau(p, d):
-            """Find τ ≥ 0 such that ||p + τ d||² = delta_sq."""
-            pd = tree_dot(p, d)
-            dd = tree_dot(d, d)
-            pp = tree_dot(p, p)
-            disc = pd**2 - dd * (pp - delta_sq)
-            safe_dd = jnp.where(dd > jnp.finfo(dd.dtype).eps, dd, 1.0)
-            tau = (-pd + jnp.sqrt(jnp.maximum(disc, 0.0))) / safe_dd
-            return jnp.maximum(tau, 0.0)
-
-        def body_fn(i, cg_state: _CGState) -> _CGState:
-            Hd = H.mv(cg_state.d)
-            dHd = cast(Array, tree_dot(cg_state.d, Hd))
-
-            # Case 1: negative or zero curvature — step to boundary along d.
-            neg_curve = dHd <= jnp.finfo(dHd.dtype).eps
-            tau_neg = _find_boundary_tau(cg_state.p, cg_state.d)
-            result_neg = (cg_state.p**ω + tau_neg * cg_state.d**ω).ω
-
-            safe_dHd = jnp.where(neg_curve, 1.0, dHd)
-            alpha = cg_state.rr / safe_dHd
-
-            p_new = (cg_state.p**ω + alpha * cg_state.d**ω).ω
-            p_new_norm_sq = tree_dot(p_new, p_new)
-
-            # Case 2: unconstrained step exits trust region — project to boundary.
-            past_boundary = p_new_norm_sq >= delta_sq
-            tau_bdy = _find_boundary_tau(cg_state.p, cg_state.d)
-            result_bdy = (cg_state.p**ω + tau_bdy * cg_state.d**ω).ω
-
-            r_new = (cg_state.r**ω + alpha * Hd**ω).ω
-            rr_new = cast(Array, tree_dot(r_new, r_new))
-
-            # Case 3: CG residual small enough — return current p_new.
-            converged = rr_new < tol_sq
-
-            done_now = neg_curve | past_boundary | converged
-            result_now = tree_where(
-                neg_curve,
-                result_neg,
-                tree_where(past_boundary, result_bdy, p_new),
-            )
-
-            safe_rr = jnp.where(
-                cg_state.rr > jnp.finfo(cg_state.rr.dtype).eps, cg_state.rr, 1.0
-            )
-            beta = rr_new / safe_rr
-            d_new = (-(r_new**ω) + beta * cg_state.d**ω).ω
-
-            new_done = cg_state.done | done_now
-            # Freeze result_p once we first commit; keep updating p otherwise.
-            new_result_p = tree_where(
-                cg_state.done,
-                cg_state.result_p,
-                tree_where(done_now, result_now, p_new),
-            )
-            new_p = tree_where(new_done, cg_state.p, p_new)
-            new_r = tree_where(new_done, cg_state.r, r_new)
-            new_rr = jnp.where(new_done, cg_state.rr, rr_new)
-            new_d = tree_where(new_done, cg_state.d, d_new)
-
-            return _CGState(
-                p=new_p,
-                r=new_r,
-                d=new_d,
-                rr=new_rr,
-                result_p=new_result_p,
-                done=new_done,
-            )
-
-        init_cg = _CGState(
-            p=p0,
-            r=r0,
-            d=d0,
-            rr=r0_norm_sq,
-            result_p=p0,
-            done=jnp.array(False),
+        # TruncatedCG solves H p = -g, exiting early on negative curvature or
+        # boundary crossing and returning y_before + stats so we can project.
+        out = lx.linear_solve(
+            H,
+            jtu.tree_map(jnp.negative, g),
+            TruncatedCG(rtol=self.rtol, atol=0, max_steps=self.max_steps),
+            options={"delta": delta},
+            throw=False,
         )
+        p = out.value
+        d = out.stats["direction"]
 
-        final_cg = lax.fori_loop(0, self.max_steps, body_fn, init_cg)
+        # For both early-exit cases (negative curvature and boundary crossing),
+        # TruncatedCG returns y_before so we can project onto the trust-region
+        # sphere here.  Interior convergence needs no projection.
+        need_projection = out.stats["negative_curvature"] | out.stats["hit_boundary"]
+        tau = _find_boundary_tau(p, d, delta_sq)
+        p_boundary = (p**ω + tau * d**ω).ω
 
-        return final_cg.result_p, RESULTS.successful
+        return tree_where(need_projection, p_boundary, p), RESULTS.successful
 
 
 SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
