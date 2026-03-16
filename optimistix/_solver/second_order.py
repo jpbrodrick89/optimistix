@@ -368,7 +368,7 @@ class LineSearchNewton(AbstractNewtonMinimiser[Y, Aux]):
         rtol: float,
         atol: float,
         norm: Callable[[PyTree], Scalar] = max_norm,
-        linear_solver: lx.AbstractLinearSolver = lx.LU(),
+        linear_solver: lx.AbstractLinearSolver = lx.AutoLinearSolver(well_posed=True),
         verbose: bool | Callable[..., None] = False,
     ):
         self.rtol = rtol
@@ -388,7 +388,8 @@ LineSearchNewton.__init__.__doc__ = """**Arguments:**
     includes three built-in norms: [`optimistix.max_norm`][],
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used to solve `H δ = -g`. Defaults to
-    `lineax.LU()`, which works for any non-singular Hessian. Use
+    `lineax.AutoLinearSolver(well_posed=True)`, which uses Cholesky when the
+    Hessian carries `positive_semidefinite_tag` and LU otherwise. Use
     `lineax.CG(rtol=..., atol=...)` for large problems (requires
     `tags=frozenset({lx.positive_semidefinite_tag})` on globally-convex problems),
     or [`optimistix.TruncatedCG`][] to handle indefinite Hessians without tags.
@@ -434,7 +435,7 @@ class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
         rtol: float,
         atol: float,
         norm: Callable[[PyTree], Scalar] = max_norm,
-        linear_solver: lx.AbstractLinearSolver = lx.LU(),
+        linear_solver: lx.AbstractLinearSolver = lx.AutoLinearSolver(well_posed=True),
         use_steihaug: bool = False,
         steihaug_max_steps: int | None = None,
         verbose: bool | Callable[..., None] = False,
@@ -460,9 +461,10 @@ TrustNewton.__init__.__doc__ = """**Arguments:**
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used to solve the Newton system when
     `use_steihaug=False`. Ignored when `use_steihaug=True`. Defaults to
-    `lineax.LU()`, which works for any non-singular Hessian. Use
-    `lineax.CG(rtol=..., atol=...)` for large problems (requires PSD tag),
-    or `use_steihaug=True` to handle indefinite Hessians via truncated CG.
+    `lineax.AutoLinearSolver(well_posed=True)`, which uses Cholesky for SPD
+    Hessians and LU otherwise. Use `lineax.CG(rtol=..., atol=...)` for large
+    problems (requires PSD tag), or `use_steihaug=True` to handle indefinite
+    Hessians via truncated CG.
 - `use_steihaug`: If `True`, use [`optimistix.SteihaugCGDescent`][] to solve
     the trust-region subproblem via truncated CG. This handles indefinite
     Hessians and is recommended for non-convex problems.
