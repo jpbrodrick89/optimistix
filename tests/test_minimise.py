@@ -22,7 +22,8 @@ from .helpers import (
     matyas,
     minimisation_fn_minima_init_args,
     minimisers,
-    _newton_needs_psd,
+    _newton_needs_convex,
+    _uses_vanilla_cg,
     _spd_minimisation_fns,
     tree_allclose,
 )
@@ -37,10 +38,9 @@ smoke_aux = (jnp.ones((2, 3)), {"smoke_aux": jnp.ones(2)})
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise(solver, _fn, minimum, init, args, options):
-    needs_psd = _newton_needs_psd(solver)
-    if needs_psd and _fn not in _spd_minimisation_fns:
-        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
-    tags = frozenset({lx.positive_semidefinite_tag}) if needs_psd else frozenset()
+    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+        return
+    tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 
     if isinstance(solver, optx.GradientDescent):
         max_steps = 100_000
@@ -78,10 +78,9 @@ def test_minimise(solver, _fn, minimum, init, args, options):
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
-    needs_psd = _newton_needs_psd(solver)
-    if needs_psd and _fn not in _spd_minimisation_fns:
-        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
-    tags = frozenset({lx.positive_semidefinite_tag}) if needs_psd else frozenset()
+    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+        return
+    tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 
     if isinstance(solver, (optx.GradientDescent, optx.NonlinearCG)):
         max_steps = 100_000
@@ -223,9 +222,9 @@ def test_optax_recompilation():
 def test_forward_minimisation(fn, y0, options, expected, solver):
     if isinstance(solver, optx.OptaxMinimiser):  # No support for forward option
         return
-    if _newton_needs_psd(solver) and fn not in _spd_minimisation_fns:
-        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
-    tags = frozenset({lx.positive_semidefinite_tag}) if _newton_needs_psd(solver) else frozenset()
+    if _newton_needs_convex(solver) and fn not in _spd_minimisation_fns:
+        return
+    tags = frozenset({lx.positive_semidefinite_tag}) if fn in _spd_minimisation_fns else frozenset()
     # Many steps because gradient descent takes ridiculously long
     sol = optx.minimise(fn, solver, y0, options=options, max_steps=2**10, tags=tags)
     assert sol.result == optx.RESULTS.successful

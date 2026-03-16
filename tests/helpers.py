@@ -259,7 +259,7 @@ _general_minimisers = (
     # optax.lbfgs includes their linesearch by default
     optx.OptaxMinimiser(optax.lbfgs(), rtol=rtol, atol=atol),
     # Exact-Hessian Newton solvers.
-    # Cholesky/CG variants require positive_semidefinite_tag (globally-convex problems).
+    # CG variant requires positive_semidefinite_tag (globally-convex problems only).
     # TruncatedCG / use_steihaug=True handle indefinite Hessians without a PSD tag.
     optx.LineSearchNewton(rtol, atol),  # default Cholesky
     optx.LineSearchNewton(rtol, atol, linear_solver=lx.CG(rtol=1e-6, atol=0.0)),
@@ -581,16 +581,32 @@ minimisation_fn_minima_init_args = (
 )
 
 # Problems known to have a globally positive-semidefinite Hessian.
-# Newton solvers with Cholesky or CG require this; pass
-# tags=frozenset({lx.positive_semidefinite_tag}) to minimise/least_squares for these.
+# Pass tags=frozenset({lx.positive_semidefinite_tag}) to minimise/least_squares
+# for these problems (required by lx.CG; harmless for other solvers).
 _spd_minimisation_fns = frozenset({bowl, matyas, square_minus_one, globally_convex})
 
 
-def _newton_needs_psd(solver) -> bool:
-    """True when solver requires positive_semidefinite_tag on the Hessian.
+def _uses_vanilla_cg(solver) -> bool:
+    """True when solver uses lineax.CG as its linear solver.
 
-    Returns False for solvers that handle indefinite Hessians (SteihaugCGDescent
-    or NewtonDescent with TruncatedCG as the linear solver).
+    lineax.CG strictly requires positive_semidefinite_tag; skip non-SPD problems
+    for these solvers. All other solvers (LU, TruncatedCG, SteihaugCGDescent)
+    handle indefinite Hessians without any tag.
+    """
+    if not isinstance(solver, (optx.LineSearchNewton, optx.TrustNewton)):
+        return False
+    return isinstance(getattr(solver.descent, "linear_solver", None), lx.CG)
+
+
+def _newton_needs_convex(solver) -> bool:
+    """True when solver uses NewtonDescent with a direct linear solver (LU, Cholesky, CG).
+
+    Such solvers cannot handle negative-curvature regions: the Newton step points in
+    the ascent direction when the Hessian is indefinite. Use this predicate in tests
+    whose functions are non-convex at the starting point (e.g. forward_only_ode).
+
+    Returns False for TruncatedCG and SteihaugCGDescent, which detect and handle
+    negative curvature explicitly.
     """
     if not isinstance(solver, (optx.LineSearchNewton, optx.TrustNewton)):
         return False

@@ -15,7 +15,7 @@ from .helpers import (
     finite_difference_jvp,
     least_squares_fn_minima_init_args,
     least_squares_optimisers,
-    _newton_needs_psd,
+    _uses_vanilla_cg,
     _spd_minimisation_fns,
     rosenbrock,
     simple_nn,
@@ -29,11 +29,11 @@ smoke_aux = (jnp.ones((2, 3)), {"smoke_aux": jnp.ones(2)})
 @pytest.mark.parametrize("solver", least_squares_optimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", least_squares_fn_minima_init_args)
 def test_least_squares(solver, _fn, minimum, init, args):
-    if _newton_needs_psd(solver) and _fn not in _spd_minimisation_fns:
-        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
+    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+        return
     tags = (
         frozenset({lx.positive_semidefinite_tag})
-        if _newton_needs_psd(solver)
+        if _fn in _spd_minimisation_fns
         else frozenset()
     )
 
@@ -76,11 +76,11 @@ def test_least_squares_jvp(getkey, solver, _fn, minimum, init, args):
     if _fn in (simple_nn, diagonal_quadratic_bowl):
         # These are ridiculously finickity to get references values for the derivatives
         return
-    if _newton_needs_psd(solver) and _fn not in _spd_minimisation_fns:
-        pytest.skip("solver requires PSD Hessian but problem is not globally convex")
+    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+        return
     tags = (
         frozenset({lx.positive_semidefinite_tag})
-        if _newton_needs_psd(solver)
+        if _fn in _spd_minimisation_fns
         else frozenset()
     )
 
