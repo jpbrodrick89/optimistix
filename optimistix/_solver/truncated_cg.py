@@ -3,7 +3,7 @@
 Started from a copy of lineax's CG implementation and modified to:
 - remove the positive-definite operator requirement
 - exit early on negative curvature instead of injecting NaN
-- optionally exit on a trust-region boundary crossing
+- optionally exit on a trust-region boundary crossing, with projection
 - support per-call rtol override (Eisenstat-Walker hook)
 """
 
@@ -21,6 +21,21 @@ from lineax._norm import max_norm as _lx_max_norm
 from lineax._solution import RESULTS as _lxRESULTS
 
 from .._misc import tree_dot, tree_full_like, tree_where
+
+
+def _find_boundary_tau(p: Any, d: Any, delta_sq: Scalar) -> Scalar:
+    """Find τ ≥ 0 such that ‖p + τ d‖² = delta_sq.
+
+    Solves the positive root of the quadratic ‖p + τd‖² = Δ²,
+    i.e. τ = (-p·d + sqrt((p·d)² - ‖d‖²(‖p‖² - Δ²))) / ‖d‖²
+    """
+    pd = cast(Scalar, tree_dot(p, d))
+    dd = cast(Scalar, tree_dot(d, d))
+    pp = cast(Scalar, tree_dot(p, p))
+    disc = pd**2 - dd * (pp - delta_sq)
+    safe_dd = jnp.where(dd > jnp.finfo(dd.dtype).eps, dd, 1.0)
+    tau = (-pd + jnp.sqrt(jnp.maximum(disc, 0.0))) / safe_dd
+    return jnp.maximum(tau, 0.0)
 
 
 _TruncatedCGState: TypeAlias = lx.AbstractLinearOperator
@@ -43,11 +58,11 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
     - `"rtol"`: Override the solver's `rtol` for this call. Intended for the
         Eisenstat-Walker tolerance schedule in Newton-CG, where the tolerance is
         tightened as the outer iterate approaches the solution.
-    - `"delta"`: Trust-region radius. If provided, the solver also exits early when
-        `‖y‖ ≥ delta`, returning the current iterate before the boundary-crossing
-        step. The search direction at the exit point is returned in
-        `stats["direction"]`, allowing the caller to project onto the trust-region
-        boundary if needed. Defaults to `jnp.inf` (no trust-region constraint).
+    - `"delta"`: Trust-region radius. If provided, the solver exits early when
+        `‖y‖ ≥ delta`, projects the step onto the trust-region boundary (solving
+        `‖p + τ d‖ = Δ`), and returns the projected step as `.value`. Negative
+        curvature exits are also projected onto the boundary when `delta` is finite.
+        Defaults to `jnp.inf` (no trust-region constraint, no projection).
 
     - `y0`: Initial estimate of the solution. Defaults to all zeros.
     """
@@ -199,19 +214,24 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
 
             # Determine what to return if we exit here.
             #
-            # Both early exits (neg_curv and boundary) return y_before so the
-            # caller can do boundary projection via  y_before + tau*d.
+            # Trust-region mode (delta finite): project onto the boundary sphere
+            # by solving ‖y_before + τ d‖ = Δ, for both neg_curv and boundary exits.
             #
-            # Exception: when there is no trust region (delta=inf, i.e. Newton-CG
-            # line-search mode) and neg_curv fires on the very first step (y=0),
-            # return d (= r0 = -g) instead of the zero vector, so the Armijo line
-            # search has a non-trivial descent direction to work with.
+            # Line-search mode (delta=inf): no projection.  On neg_curv at the very
+            # first step (y=0) fall back to d (= r0 = -g) so the Armijo search has
+            # a non-trivial descent direction; on later steps return y_before.
+            done_now = neg_curv | hit_boundary
+            should_project = done_now & ~jnp.isinf(delta)
+
             y_is_zero = cast(Scalar, tree_dot(cg_state.y, cg_state.y)) <= 0
             first_step_linesearch_fallback = y_is_zero & neg_curv & jnp.isinf(delta)
             y_before = tree_where(first_step_linesearch_fallback, cg_state.d, cg_state.y)
 
-            done_now = neg_curv | hit_boundary
-            result_y_now = tree_where(done_now, y_before, y_new)
+            tau = _find_boundary_tau(cg_state.y, cg_state.d, delta_sq)
+            y_projected = (cg_state.y**ω + tau * cg_state.d**ω).ω
+
+            y_exit = tree_where(done_now, y_before, y_new)
+            result_y_now = tree_where(should_project, y_projected, y_exit)
 
             return _CGState(
                 diff=diff,

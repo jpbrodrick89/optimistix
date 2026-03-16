@@ -30,7 +30,7 @@ For large-scale problems consider [`optimistix.BFGS`][] or [`optimistix.LBFGS`][
 """
 
 from collections.abc import Callable
-from typing import Any, cast, Generic
+from typing import Any, Generic
 
 import equinox as eqx
 import jax
@@ -46,7 +46,6 @@ from .._misc import (
     cauchy_termination,
     default_verbose,
     max_norm,
-    tree_dot,
     tree_full_like,
     tree_where,
     two_norm,
@@ -89,16 +88,6 @@ def _make_hessian_f_info(
 # SteihaugCGDescent
 # ---------------------------------------------------------------------------
 
-
-def _find_boundary_tau(p: Any, d: Any, delta_sq: Scalar) -> Scalar:
-    """Find τ ≥ 0 such that ‖p + τ d‖² = delta_sq."""
-    pd = cast(Scalar, tree_dot(p, d))
-    dd = cast(Scalar, tree_dot(d, d))
-    pp = cast(Scalar, tree_dot(p, p))
-    disc = pd**2 - dd * (pp - delta_sq)
-    safe_dd = jnp.where(dd > jnp.finfo(dd.dtype).eps, dd, 1.0)
-    tau = (-pd + jnp.sqrt(jnp.maximum(disc, 0.0))) / safe_dd
-    return jnp.maximum(tau, 0.0)
 
 
 class _SteihaugCGDescentState(eqx.Module, Generic[Y]):
@@ -169,10 +158,11 @@ class SteihaugCGDescent(
         g = state.f_info.grad
         H = state.f_info.hessian
         delta = state.grad_norm * step_size
-        delta_sq = delta**2
 
-        # TruncatedCG solves H p = -g, exiting early on negative curvature or
-        # boundary crossing and returning y_before + stats so we can project.
+        # TruncatedCG solves H p = -g.  With a finite delta it handles both
+        # early exits (negative curvature and boundary crossing) internally,
+        # projecting onto the trust-region sphere and returning the result
+        # directly as .value.
         out = lx.linear_solve(
             H,
             jtu.tree_map(jnp.negative, g),
@@ -180,17 +170,7 @@ class SteihaugCGDescent(
             options={"delta": delta},
             throw=False,
         )
-        p = out.value
-        d = out.stats["direction"]
-
-        # For both early-exit cases (negative curvature and boundary crossing),
-        # TruncatedCG returns y_before so we can project onto the trust-region
-        # sphere here.  Interior convergence needs no projection.
-        need_projection = out.stats["negative_curvature"] | out.stats["hit_boundary"]
-        tau = _find_boundary_tau(p, d, delta_sq)
-        p_boundary = (p**ω + tau * d**ω).ω
-
-        return tree_where(need_projection, p_boundary, p), RESULTS.successful
+        return out.value, RESULTS.successful
 
 
 SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
