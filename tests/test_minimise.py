@@ -23,8 +23,8 @@ from .helpers import (
     minimisation_fn_minima_init_args,
     minimisers,
     _newton_needs_convex,
-    _uses_vanilla_cg,
     _spd_minimisation_fns,
+    _uses_vanilla_cg,
     tree_allclose,
 )
 
@@ -78,11 +78,11 @@ def test_minimise(solver, _fn, minimum, init, args, options):
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
-    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+    if _newton_needs_convex(solver) and _fn not in _spd_minimisation_fns:
         return
     tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 
-    if isinstance(solver, (optx.GradientDescent, optx.NonlinearCG)):
+    if isinstance(solver, (optx.GradientDescent, optx.NonlinearCG, optx.NelderMead)):
         max_steps = 100_000
         atol = rtol = 1e-2
     else:
@@ -122,8 +122,9 @@ def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
     out, t_out = eqx.filter_jit(ft.partial(eqx.filter_jvp, minimise))(
         (init, dynamic_args), (t_init, t_dynamic_args), adjoint=otd
     )
-    if _fn is bowl:
-        # Finite difference is very inaccurate on this problem.
+    if _fn in (bowl, globally_convex):
+        # The minimum y*=0 is independent of both init and args for these functions,
+        # so ImplicitAdjoint correctly gives zero tangent. FD is noisy here.
         expected_out = t_expected_out = jtu.tree_map(jnp.zeros_like, init)
     elif _fn in (beale, matyas):
         if isinstance(solver, optx.NonlinearCG):

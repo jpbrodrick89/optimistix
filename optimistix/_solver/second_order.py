@@ -389,10 +389,10 @@ LineSearchNewton.__init__.__doc__ = """**Arguments:**
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used to solve `H δ = -g`. Defaults to
     `lineax.AutoLinearSolver(well_posed=True)`, which uses Cholesky when the
-    Hessian carries `positive_semidefinite_tag` and LU otherwise. Use
-    `lineax.CG(rtol=..., atol=...)` for large problems (requires
-    `tags=frozenset({lx.positive_semidefinite_tag})` on globally-convex problems),
-    or [`optimistix.TruncatedCG`][] to handle indefinite Hessians without tags.
+    Hessian carries `positive_semidefinite_tag` (pass
+    `tags=frozenset({lx.positive_semidefinite_tag})` on globally-convex problems)
+    and LU otherwise. Use `lineax.CG(rtol=..., atol=...)` for large problems, or
+    [`optimistix.TruncatedCG`][] to handle indefinite Hessians without tags.
 - `verbose`: Whether to print out extra information about how the solve is
     proceeding. Can be `False`, `True`, or a callable `**kwargs -> None`.
 """
@@ -461,10 +461,8 @@ TrustNewton.__init__.__doc__ = """**Arguments:**
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used to solve the Newton system when
     `use_steihaug=False`. Ignored when `use_steihaug=True`. Defaults to
-    `lineax.AutoLinearSolver(well_posed=True)`, which uses Cholesky for SPD
-    Hessians and LU otherwise. Use `lineax.CG(rtol=..., atol=...)` for large
-    problems (requires PSD tag), or `use_steihaug=True` to handle indefinite
-    Hessians via truncated CG.
+    `lineax.AutoLinearSolver(well_posed=True)`, using Cholesky for SPD Hessians
+    and LU otherwise. Use `use_steihaug=True` to handle indefinite Hessians.
 - `use_steihaug`: If `True`, use [`optimistix.SteihaugCGDescent`][] to solve
     the trust-region subproblem via truncated CG. This handles indefinite
     Hessians and is recommended for non-convex problems.

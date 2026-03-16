@@ -15,8 +15,9 @@ from .helpers import (
     finite_difference_jvp,
     least_squares_fn_minima_init_args,
     least_squares_optimisers,
-    _uses_vanilla_cg,
+    _newton_needs_convex,
     _spd_minimisation_fns,
+    _uses_vanilla_cg,
     rosenbrock,
     simple_nn,
     tree_allclose,
@@ -31,11 +32,7 @@ smoke_aux = (jnp.ones((2, 3)), {"smoke_aux": jnp.ones(2)})
 def test_least_squares(solver, _fn, minimum, init, args):
     if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
         return
-    tags = (
-        frozenset({lx.positive_semidefinite_tag})
-        if _fn in _spd_minimisation_fns
-        else frozenset()
-    )
+    tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 
     atol = rtol = 1e-4
     has_aux = random.choice([True, False])
@@ -76,13 +73,9 @@ def test_least_squares_jvp(getkey, solver, _fn, minimum, init, args):
     if _fn in (simple_nn, diagonal_quadratic_bowl):
         # These are ridiculously finickity to get references values for the derivatives
         return
-    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+    if _newton_needs_convex(solver) and _fn not in _spd_minimisation_fns:
         return
-    tags = (
-        frozenset({lx.positive_semidefinite_tag})
-        if _fn in _spd_minimisation_fns
-        else frozenset()
-    )
+    tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 
     atol = rtol = 1e-2
     has_aux = random.choice([True, False])

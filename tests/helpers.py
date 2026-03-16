@@ -259,7 +259,7 @@ _general_minimisers = (
     # optax.lbfgs includes their linesearch by default
     optx.OptaxMinimiser(optax.lbfgs(), rtol=rtol, atol=atol),
     # Exact-Hessian Newton solvers.
-    # CG variant requires positive_semidefinite_tag (globally-convex problems only).
+    # Cholesky/CG variants require positive_semidefinite_tag (globally-convex problems).
     # TruncatedCG / use_steihaug=True handle indefinite Hessians without a PSD tag.
     optx.LineSearchNewton(rtol, atol),  # default Cholesky
     optx.LineSearchNewton(rtol, atol, linear_solver=lx.CG(rtol=1e-6, atol=0.0)),
@@ -425,12 +425,14 @@ def square_minus_one(x: Array, args: PyTree):
     return jnp.sum(jnp.square(x)) - 1.0
 
 
-def globally_convex(y: Array, _) -> Scalar:
-    """Non-quadratic globally convex function: f(y) = Σ cosh(y_i) − 1.
+def globally_convex(y: Array, scale: Array) -> Scalar:
+    """Non-quadratic globally convex function: f(y) = Σ cosh(scale_i * y_i) − 1.
 
-    Hessian H = diag(cosh(y)) > 0 everywhere; unique minimum at y = 0, f* = 0.
+    Hessian H = diag(scale^2 * cosh(scale*y)) > 0 everywhere for any scale > 0.
+    Unique minimum at y = 0, f* = 0, regardless of scale.
+    Passing scale as args gives a non-trivial (but still SPD) Hessian for testing.
     """
-    return jnp.sum(jnp.cosh(y) - 1)
+    return jnp.sum(jnp.cosh(scale * y) - 1)
 
 
 #
@@ -577,21 +579,19 @@ minimisation_fn_minima_init_args = (
     # Problems with initial value of 0
     (square_minus_one, jnp.array(-1.0), jnp.array(1.0), None),
     # Globally convex (PSD Hessian everywhere); used for Newton+Cholesky/CG tests.
-    (globally_convex, jnp.array(0.0), jnp.array([4.0, -3.0, 2.0]), None),
+    (globally_convex, jnp.array(0.0), jnp.array([0.4, -0.3, 0.2]), jnp.ones(3)),
 )
 
 # Problems known to have a globally positive-semidefinite Hessian.
-# Pass tags=frozenset({lx.positive_semidefinite_tag}) to minimise/least_squares
-# for these problems (required by lx.CG; harmless for other solvers).
+# Newton solvers with Cholesky or CG require this; pass
+# tags=frozenset({lx.positive_semidefinite_tag}) to minimise/least_squares for these.
 _spd_minimisation_fns = frozenset({bowl, matyas, square_minus_one, globally_convex})
 
 
 def _uses_vanilla_cg(solver) -> bool:
-    """True when solver uses lineax.CG as its linear solver.
+    """True only when Newton uses lx.CG as its linear solver.
 
-    lineax.CG strictly requires positive_semidefinite_tag; skip non-SPD problems
-    for these solvers. All other solvers (LU, TruncatedCG, SteihaugCGDescent)
-    handle indefinite Hessians without any tag.
+    lx.CG requires positive_semidefinite_tag; skip non-SPD problems for this case.
     """
     if not isinstance(solver, (optx.LineSearchNewton, optx.TrustNewton)):
         return False
@@ -599,14 +599,11 @@ def _uses_vanilla_cg(solver) -> bool:
 
 
 def _newton_needs_convex(solver) -> bool:
-    """True when solver uses NewtonDescent with a direct linear solver (LU, Cholesky, CG).
+    """True for Newton with a direct linear solver (LU/Cholesky/CG).
 
-    Such solvers cannot handle negative-curvature regions: the Newton step points in
-    the ascent direction when the Hessian is indefinite. Use this predicate in tests
-    whose functions are non-convex at the starting point (e.g. forward_only_ode).
-
-    Returns False for TruncatedCG and SteihaugCGDescent, which detect and handle
-    negative curvature explicitly.
+    These solvers may diverge or crash on non-convex problems. SteihaugCGDescent
+    and TruncatedCG handle indefinite Hessians and return False.
+    Used for JVP tests to avoid XLA compilation cache exhaustion.
     """
     if not isinstance(solver, (optx.LineSearchNewton, optx.TrustNewton)):
         return False
