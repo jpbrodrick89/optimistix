@@ -16,7 +16,6 @@ from .helpers import (
     least_squares_fn_minima_init_args,
     least_squares_optimisers,
     _spd_minimisation_fns,
-    _uses_vanilla_cg,
     rosenbrock,
     simple_nn,
     tree_allclose,
@@ -29,7 +28,7 @@ smoke_aux = (jnp.ones((2, 3)), {"smoke_aux": jnp.ones(2)})
 @pytest.mark.parametrize("solver", least_squares_optimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", least_squares_fn_minima_init_args)
 def test_least_squares(solver, _fn, minimum, init, args):
-    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+    if isinstance(getattr(solver.descent, "linear_solver", None), lx.CG) and _fn not in _spd_minimisation_fns:
         return
     tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 
@@ -72,7 +71,7 @@ def test_least_squares_jvp(getkey, solver, _fn, minimum, init, args):
     if _fn in (simple_nn, diagonal_quadratic_bowl):
         # These are ridiculously finickity to get references values for the derivatives
         return
-    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+    if isinstance(getattr(solver.descent, "linear_solver", None), lx.CG) and _fn not in _spd_minimisation_fns:
         return
     tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
 

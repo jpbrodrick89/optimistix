@@ -258,9 +258,8 @@ _general_minimisers = (
     optx.OptaxMinimiser(optax.adam(learning_rate=3e-3), rtol=rtol, atol=atol),
     # optax.lbfgs includes their linesearch by default
     optx.OptaxMinimiser(optax.lbfgs(), rtol=rtol, atol=atol),
-    # Exact-Hessian Newton solvers.
-    # Cholesky/CG variants require positive_semidefinite_tag (globally-convex problems).
-    # TruncatedCG / use_steihaug=True handle indefinite Hessians without a PSD tag.
+    # Exact-Hessian Newton solvers; Cholesky/CG require positive_semidefinite_tag,
+    # TruncatedCG / use_steihaug=True handle indefinite Hessians without it.
     optx.LineSearchNewton(rtol, atol),  # default Cholesky
     optx.LineSearchNewton(rtol, atol, linear_solver=lx.CG(rtol=1e-6, atol=0.0)),
     optx.LineSearchNewton(rtol, atol, linear_solver=optx.TruncatedCG(rtol=0.5, atol=0.0)),
@@ -582,20 +581,8 @@ minimisation_fn_minima_init_args = (
     (globally_convex, jnp.array(0.0), jnp.array([0.4, -0.3, 0.2]), jnp.ones(3)),
 )
 
-# Problems known to have a globally positive-semidefinite Hessian.
-# Newton solvers with Cholesky or CG require this; pass
-# tags=frozenset({lx.positive_semidefinite_tag}) to minimise/least_squares for these.
+# Problems with a globally PSD Hessian; lx.CG-based Newton requires this.
 _spd_minimisation_fns = frozenset({bowl, matyas, square_minus_one, globally_convex})
-
-
-def _uses_vanilla_cg(solver) -> bool:
-    """True only when Newton uses lx.CG as its linear solver.
-
-    lx.CG requires positive_semidefinite_tag; skip non-SPD problems for this case.
-    """
-    if not isinstance(solver, (optx.LineSearchNewton, optx.TrustNewton)):
-        return False
-    return isinstance(getattr(solver.descent, "linear_solver", None), lx.CG)
 
 
 

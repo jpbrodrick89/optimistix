@@ -14,7 +14,6 @@ import pytest
 
 from .helpers import (
     _spd_minimisation_fns,
-    _uses_vanilla_cg,
     beale,
     bowl,
     finite_difference_jvp,
@@ -37,7 +36,7 @@ smoke_aux = (jnp.ones((2, 3)), {"smoke_aux": jnp.ones(2)})
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise(solver, _fn, minimum, init, args, options):
-    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+    if isinstance(getattr(solver.descent, "linear_solver", None), lx.CG) and _fn not in _spd_minimisation_fns:
         return
     tags = (
         frozenset({lx.positive_semidefinite_tag})
@@ -81,7 +80,7 @@ def test_minimise(solver, _fn, minimum, init, args, options):
 @pytest.mark.parametrize("solver", minimisers)
 @pytest.mark.parametrize("_fn, minimum, init, args", minimisation_fn_minima_init_args)
 def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
-    if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
+    if isinstance(getattr(solver.descent, "linear_solver", None), lx.CG) and _fn not in _spd_minimisation_fns:
         return
     tags = (
         frozenset({lx.positive_semidefinite_tag})
@@ -230,7 +229,7 @@ def test_optax_recompilation():
 def test_forward_minimisation(fn, y0, options, expected, solver):
     if isinstance(solver, optx.OptaxMinimiser):  # No support for forward option
         return
-    elif _uses_vanilla_cg(solver) and fn not in _spd_minimisation_fns:
+    elif isinstance(getattr(solver.descent, "linear_solver", None), lx.CG) and fn not in _spd_minimisation_fns:
         return
     else:
         tags = (
