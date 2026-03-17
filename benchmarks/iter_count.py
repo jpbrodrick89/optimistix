@@ -43,7 +43,7 @@ def square_minus_one(x, args):
 
 
 def globally_convex(y, scale):
-    return jnp.sum(scale * y**2)
+    return jnp.sum(jnp.cosh(scale * y) - 1)
 
 
 def _himmelblau(tree, args):
@@ -64,7 +64,8 @@ minimisation_problems = [
     ("beale",         beale,         [jnp.array(2.0), jnp.array(0.0)], (jnp.array(1.5), jnp.array(2.25), jnp.array(2.625)), False),
     ("himmelblau",    _himmelblau,   [jnp.array(2.0), jnp.array(2.5)], (jnp.array(11.0), jnp.array(7.0)),  False),
     ("sq_minus_one",  square_minus_one, jnp.array(1.0),            None,                              True),
-    ("glob_convex",   globally_convex,  jnp.array([10.0, -8.0, 6.0]), jnp.ones(3),                   True),
+    ("glob_convex",   globally_convex,  jnp.array([0.4, -0.3, 0.2]),  jnp.ones(3),                   True),
+    ("glob_convex_far", globally_convex, jnp.array([10.0, -8.0, 6.0]), jnp.ones(3),                  True),
 ]
 
 # ---------------------------------------------------------------------------
