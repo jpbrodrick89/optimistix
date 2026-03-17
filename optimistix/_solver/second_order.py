@@ -45,6 +45,7 @@ from .._custom_types import Aux, Fn, Y
 from .._misc import (
     cauchy_termination,
     default_verbose,
+    gradient_termination,
     max_norm,
     tree_full_like,
     tree_where,
@@ -295,7 +296,7 @@ class AbstractNewtonMinimiser(
             f_diff = (f_eval**ω - state.f_info.f**ω).ω
             terminate = cauchy_termination(
                 self.rtol, self.atol, self.norm, state.y_eval, y_diff, f_eval, f_diff
-            )
+            ) | gradient_termination(self.rtol, self.atol, self.norm, state.y_eval, grad)
             terminate = jnp.where(state.first_step, jnp.array(False), terminate)
             return (
                 state.y_eval,
