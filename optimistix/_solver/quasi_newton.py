@@ -90,11 +90,11 @@ class _QuasiNewtonState(
     first_step: Bool[Array, ""]
     y_eval: Y
     search_state: SearchState
-    # Updated after each accepted descent step
+    # Updated after each descent step
     f_info: _Hessian
     aux: Aux
     descent_state: DescentState
-    # Termination
+    # Used for termination
     terminate: Bool[Array, ""]
     result: RESULTS
     # Used in compat.py

@@ -61,12 +61,8 @@ def damped_newton_step(
             f_info.hessian.in_structure()
         )
         vector = f_info.grad
-        # H + λI is always symmetric (H symmetric, λI symmetric).  It is also
-        # positive semidefinite whenever H is, since λ > 0 here.
-        _tags: frozenset[object] = frozenset({lx.symmetric_tag})
         if lx.is_positive_semidefinite(f_info.hessian):
-            _tags = _tags | frozenset({lx.positive_semidefinite_tag})
-        operator = lx.TaggedLinearOperator(operator, _tags)
+            operator = lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
     elif isinstance(f_info, FunctionInfo.ResidualJac):
         y_structure = f_info.jac.in_structure()
         operator = lx.FunctionLinearOperator(_Damped(f_info.jac, lm_param), y_structure)
