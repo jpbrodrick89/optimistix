@@ -310,24 +310,6 @@ def cauchy_termination(
     return y_converged & f_converged
 
 
-def gradient_termination(
-    rtol: float,
-    atol: float,
-    norm: Callable[[PyTree], Scalar],
-    y: Y,
-    grad: Y,
-) -> Bool[Array, ""]:
-    """Terminate if the gradient is small relative to the current point.
-
-    Checks that `‖grad‖ < atol + rtol * ‖y‖` (element-wise scaling).  This is
-    a first-order stationarity criterion that allows exact Newton methods to
-    terminate as soon as they reach a stationary point, without needing a
-    second "no-op" step to satisfy `cauchy_termination`.
-    """
-    y_scale = (atol + rtol * ω(y).call(jnp.abs)).ω
-    return norm((ω(grad).call(jnp.abs) / y_scale**ω).ω) < 1
-
-
 class _JaxprEqual:
     def __init__(self, jaxpr: jex.core.Jaxpr):
         self.jaxpr = jaxpr
