@@ -145,9 +145,7 @@ class NewtonDescent(
         #       than descends (e.g. LU on a negative-definite Hessian).
         if isinstance(f_info, FunctionInfo.EvalGradHessian):
             is_descent = tree_dot(f_info.grad, newton) > 0
-            use_fallback = (result != RESULTS.successful) | ~is_descent
-            newton = tree_where(use_fallback, f_info.grad, newton)
-            result = RESULTS.where(use_fallback, RESULTS.successful, result)
+            newton = tree_where(~is_descent, f_info.grad, newton)
         if self.norm is not None:
             newton = (newton**ω / self.norm(newton)).ω
         return _NewtonDescentState(newton, result)
