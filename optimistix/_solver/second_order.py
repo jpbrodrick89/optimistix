@@ -388,11 +388,10 @@ LineSearchNewton.__init__.__doc__ = """**Arguments:**
     includes three built-in norms: [`optimistix.max_norm`][],
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used to solve `H δ = -g`. Defaults to
-    `lineax.AutoLinearSolver(well_posed=True)`, which uses Cholesky when the
-    Hessian carries `positive_semidefinite_tag` (pass
-    `tags=frozenset({lx.positive_semidefinite_tag})` on globally-convex problems)
-    and LU otherwise. Use `lineax.CG(rtol=..., atol=...)` for large problems, or
-    [`optimistix.TruncatedCG`][] to handle indefinite Hessians without tags.
+    `lineax.AutoLinearSolver(well_posed=True)`, which assumes the Hessian is
+    square and non-singular and dispatches to LU. Use
+    `lineax.CG(rtol=..., atol=...)` for large problems, or
+    [`optimistix.TruncatedCG`][] to handle indefinite Hessians.
 - `verbose`: Whether to print out extra information about how the solve is
     proceeding. Can be `False`, `True`, or a callable `**kwargs -> None`.
 """
@@ -474,11 +473,11 @@ TrustNewton.__init__.__doc__ = """**Arguments:**
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used inside `IndirectDampedNewtonDescent`
     when `use_steihaug=False`. Defaults to
-    `lineax.AutoLinearSolver(well_posed=True)`, which dispatches to Cholesky
-    when the (shifted) Hessian carries `positive_semidefinite_tag` and LU
-    otherwise. Passing `linear_solver` together with `use_steihaug=True` is an
-    error: `SteihaugCGDescent` constructs its own internal solver and does not
-    use this argument.
+    `lineax.AutoLinearSolver(well_posed=True)`, which assumes the (shifted)
+    Hessian is square and non-singular and dispatches to LU. Passing
+    `linear_solver` together with `use_steihaug=True` is an error:
+    `SteihaugCGDescent` constructs its own internal solver and does not use
+    this argument.
 - `use_steihaug`: If `True`, use [`optimistix.SteihaugCGDescent`][] to solve
     the trust-region subproblem via truncated CG. This handles indefinite
     Hessians and is recommended for non-convex problems.
