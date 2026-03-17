@@ -260,10 +260,10 @@ _general_minimisers = (
     optx.OptaxMinimiser(optax.lbfgs(), rtol=rtol, atol=atol),
     # Exact-Hessian Newton solvers; Cholesky/CG require positive_semidefinite_tag,
     # TruncatedCG / use_steihaug=True handle indefinite Hessians without it.
-    optx.LineSearchNewton(rtol, atol),  # default Cholesky
+    optx.LineSearchNewton(rtol, atol),
     optx.LineSearchNewton(rtol, atol, linear_solver=lx.CG(rtol=1e-6, atol=0.0)),
     optx.LineSearchNewton(rtol, atol, linear_solver=optx.TruncatedCG(rtol=0.5, atol=0.0)),
-    optx.TrustNewton(rtol, atol),  # default Cholesky
+    optx.TrustNewton(rtol, atol),
     optx.TrustNewton(rtol, atol, linear_solver=lx.CG(rtol=1e-6, atol=0.0)),
     optx.TrustNewton(rtol, atol, use_steihaug=True),
 )
