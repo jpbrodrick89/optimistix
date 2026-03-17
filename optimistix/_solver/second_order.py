@@ -402,6 +402,8 @@ LineSearchNewton.__init__.__doc__ = """**Arguments:**
 # TrustNewton
 # ---------------------------------------------------------------------------
 
+_UNSET = object()
+
 
 class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
     """Newton minimiser with classical trust-region globalisation.
@@ -437,11 +439,20 @@ class TrustNewton(AbstractNewtonMinimiser[Y, Aux]):
         rtol: float,
         atol: float,
         norm: Callable[[PyTree], Scalar] = max_norm,
-        linear_solver: lx.AbstractLinearSolver = lx.AutoLinearSolver(well_posed=True),
+        linear_solver: lx.AbstractLinearSolver = _UNSET,  # type: ignore[assignment]
         use_steihaug: bool = False,
         steihaug_max_steps: int | None = None,
         verbose: bool | Callable[..., None] = False,
     ):
+        if use_steihaug and linear_solver is not _UNSET:
+            raise ValueError(
+                "`linear_solver` has no effect when `use_steihaug=True` because "
+                "`SteihaugCGDescent` constructs its own `TruncatedCG` solver "
+                "internally. Either remove `linear_solver` or set "
+                "`use_steihaug=False`."
+            )
+        if linear_solver is _UNSET:
+            linear_solver = lx.AutoLinearSolver(well_posed=True)
         self.rtol = rtol
         self.atol = atol
         self.norm = norm
@@ -462,10 +473,12 @@ TrustNewton.__init__.__doc__ = """**Arguments:**
     includes three built-in norms: [`optimistix.max_norm`][],
     [`optimistix.rms_norm`][], and [`optimistix.two_norm`][].
 - `linear_solver`: The linear solver used inside `IndirectDampedNewtonDescent`
-    when `use_steihaug=False`. Ignored when `use_steihaug=True`. Defaults to
+    when `use_steihaug=False`. Defaults to
     `lineax.AutoLinearSolver(well_posed=True)`, which dispatches to Cholesky
     when the (shifted) Hessian carries `positive_semidefinite_tag` and LU
-    otherwise.
+    otherwise. Passing `linear_solver` together with `use_steihaug=True` is an
+    error: `SteihaugCGDescent` constructs its own internal solver and does not
+    use this argument.
 - `use_steihaug`: If `True`, use [`optimistix.SteihaugCGDescent`][] to solve
     the trust-region subproblem via truncated CG. This handles indefinite
     Hessians and is recommended for non-convex problems.
