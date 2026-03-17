@@ -39,7 +39,7 @@ def beale(tree, args):
 
 
 def square_minus_one(x, args):
-    return (x**2 - 1) ** 2
+    return jnp.sum(jnp.square(x)) - 1.0
 
 
 def globally_convex(y, scale):
@@ -52,7 +52,7 @@ def _himmelblau(tree, args):
     return (x**2 + y - a) ** 2 + (x + y**2 - b) ** 2
 
 
-key = jr.PRNGKey(0)
+key = jr.PRNGKey(17)
 bowl_init = ({"a": 0.05 * jnp.ones((2, 3, 3))}, (0.05 * jnp.ones(2)))
 flat_bowl, _ = jfu.ravel_pytree(bowl_init)
 matrix = jr.normal(key, (flat_bowl.size, flat_bowl.size))
@@ -74,14 +74,14 @@ minimisation_problems = [
 
 
 def diagonal_quadratic_bowl(tree, args):
-    flat_a, flat_b = jtu.tree_map(lambda x: x.ravel(), tree[0]["a"]), tree[1].ravel()
-    flat = jnp.concatenate([flat_a, flat_b])
-    return flat
+    return jtu.tree_map(lambda x, w: jnp.square(x) * (0.1 + w), tree, args)
 
 
 diagonal_bowl_init = ({"a": 0.05 * jnp.ones((2, 3, 3))}, (0.05 * jnp.ones(2)))
 leaves, treedef = jtu.tree_flatten(diagonal_bowl_init)
-diagonal_bowl_args = treedef.unflatten([l * 2 for l in leaves])
+diagonal_bowl_args = treedef.unflatten(
+    [jr.normal(key, leaf.shape, leaf.dtype) ** 2 for leaf in leaves]
+)
 
 
 def rosenbrock(tree, args):
