@@ -7,7 +7,7 @@ Started from a copy of lineax's CG implementation and modified to:
 - support per-call rtol override (Eisenstat-Walker hook)
 """
 
-from typing import Any, TypeAlias, cast
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
@@ -171,17 +171,17 @@ class TruncatedCG(lx.AbstractLinearSolver[_TruncatedCGState]):
                 return jnp.array(True)
 
         class _CGState(eqx.Module):
-            diff: Any       # last step (for convergence check)
-            y: Any          # current iterate
-            r: Any          # current residual
-            d: Any          # current CG direction
-            gamma: Scalar   # r^T r
+            diff: Any  # last step (for convergence check)
+            y: Any  # current iterate
+            r: Any  # current residual
+            d: Any  # current CG direction
+            gamma: Scalar  # r^T r
             step: Scalar
-            done: Bool[Array, ""]           # neg_curv or boundary exit fired
-            neg_curv: Bool[Array, ""]       # negative curvature exit
-            hit_boundary: Bool[Array, ""]   # trust-region boundary exit
-            result_y: Any   # iterate to return at exit (y_before for early exits)
-            result_d: Any   # CG direction at exit (for boundary projection)
+            done: Bool[Array, ""]  # neg_curv or boundary exit fired
+            neg_curv: Bool[Array, ""]  # negative curvature exit
+            hit_boundary: Bool[Array, ""]  # trust-region boundary exit
+            result_y: Any  # iterate to return at exit (y_before for early exits)
+            result_d: Any  # CG direction at exit (for boundary projection)
 
         def cond_fun(cg_state: _CGState) -> Bool[Array, ""]:
             out = cg_state.gamma > 0

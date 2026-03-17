@@ -1,3 +1,4 @@
+from .._linear_solver import TruncatedCG as TruncatedCG
 from .backtracking import BacktrackingArmijo as BacktrackingArmijo
 from .best_so_far import (
     BestSoFarFixedPoint as BestSoFarFixedPoint,
@@ -52,7 +53,6 @@ from .second_order import (
     SteihaugCGDescent as SteihaugCGDescent,
     TrustNewton as TrustNewton,
 )
-from .truncated_cg import TruncatedCG as TruncatedCG
 from .trust_region import (
     ClassicalTrustRegion as ClassicalTrustRegion,
     LinearTrustRegion as LinearTrustRegion,

@@ -42,12 +42,12 @@ from equinox.internal import ω
 from jaxtyping import Array, Bool, PyTree, Scalar
 
 from .._custom_types import Aux, Fn, Y
+from .._linear_solver import TruncatedCG
 from .._misc import (
     cauchy_termination,
     default_verbose,
     max_norm,
     tree_full_like,
-    tree_where,
     two_norm,
 )
 from .._search import AbstractDescent, AbstractSearch, FunctionInfo
@@ -57,7 +57,6 @@ from .gauss_newton import NewtonDescent
 from .levenberg_marquardt import IndirectDampedNewtonDescent
 from .newton_chord import _NoAux
 from .quasi_newton import _QuasiNewtonState, AbstractNewtonBase
-from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
 
 
@@ -89,7 +88,6 @@ def _make_hessian_f_info(
 # ---------------------------------------------------------------------------
 # SteihaugCGDescent
 # ---------------------------------------------------------------------------
-
 
 
 class _SteihaugCGDescentState(eqx.Module, Generic[Y]):
