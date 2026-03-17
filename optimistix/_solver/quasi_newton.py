@@ -82,9 +82,9 @@ def _outer(tree1, tree2):
     return jtu.tree_map(leaf_fn, tree1)
 
 
-class _NewtonMinimiserState(
+class _QuasiNewtonState(
     eqx.Module,
-    Generic[Y, Aux, SearchState, DescentState, _Hessian],
+    Generic[Y, Aux, SearchState, DescentState, _Hessian, HessianUpdateState],
 ):
     # Updated every search step
     first_step: Bool[Array, ""]
@@ -99,17 +99,11 @@ class _NewtonMinimiserState(
     result: RESULTS
     # Used in compat.py
     num_accepted_steps: Int[Array, ""]
-
-
-class _QuasiNewtonState(
-    _NewtonMinimiserState[Y, Aux, SearchState, DescentState, _Hessian],
-    Generic[Y, Aux, SearchState, DescentState, _Hessian, HessianUpdateState],
-):
-    # Quasi-Newton Hessian approximation update state
+    # Hessian approximation update state (None for exact-Newton)
     hessian_update_state: HessianUpdateState
 
 
-_BoundNewtonState = TypeVar("_BoundNewtonState", bound=_NewtonMinimiserState)
+_BoundNewtonState = TypeVar("_BoundNewtonState", bound=_QuasiNewtonState)
 
 
 class AbstractNewtonBase(

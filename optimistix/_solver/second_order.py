@@ -56,7 +56,7 @@ from .backtracking import BacktrackingArmijo
 from .gauss_newton import NewtonDescent
 from .levenberg_marquardt import IndirectDampedNewtonDescent
 from .newton_chord import _NoAux
-from .quasi_newton import _NewtonMinimiserState, AbstractNewtonBase
+from .quasi_newton import _QuasiNewtonState, AbstractNewtonBase
 from .truncated_cg import TruncatedCG
 from .trust_region import ClassicalTrustRegion
 
@@ -201,7 +201,7 @@ SteihaugCGDescent.__init__.__doc__ = """**Arguments:**
 
 
 class AbstractNewtonMinimiser(
-    AbstractNewtonBase[Y, Aux, _NewtonMinimiserState],
+    AbstractNewtonBase[Y, Aux, _QuasiNewtonState],
     Generic[Y, Aux],
 ):
     """Abstract base class for exact second-order Newton minimisers.
@@ -243,13 +243,13 @@ class AbstractNewtonMinimiser(
         f_struct: jax.ShapeDtypeStruct,
         aux_struct: PyTree[jax.ShapeDtypeStruct],
         tags: frozenset[object],
-    ) -> _NewtonMinimiserState:
+    ) -> _QuasiNewtonState:
         autodiff_mode = options.get("autodiff_mode", "bwd")
         f_info_struct, _ = eqx.filter_eval_shape(
             _make_hessian_f_info, fn, y, args, tags, autodiff_mode=autodiff_mode
         )
         f_info = tree_full_like(f_info_struct, 0, allow_static=True)
-        return _NewtonMinimiserState(
+        return _QuasiNewtonState(
             first_step=jnp.array(True),
             y_eval=y,
             search_state=self.search.init(y, f_info_struct),
@@ -259,6 +259,7 @@ class AbstractNewtonMinimiser(
             terminate=jnp.array(False),
             result=RESULTS.successful,
             num_accepted_steps=jnp.array(0),
+            hessian_update_state=None,
         )
 
     def _prepare_step(
@@ -267,7 +268,7 @@ class AbstractNewtonMinimiser(
         y: Y,
         args: PyTree,
         options: dict[str, Any],
-        state: _NewtonMinimiserState,
+        state: _QuasiNewtonState,
         tags: frozenset[object],
     ) -> tuple[Scalar, Aux, Callable[..., Any], None]:
         autodiff_mode = options.get("autodiff_mode", "bwd")
@@ -309,7 +310,7 @@ class AbstractNewtonMinimiser(
 
     def _build_new_state(
         self,
-        old_state: _NewtonMinimiserState,
+        old_state: _QuasiNewtonState,
         y_eval: Y,
         search_state: Any,
         f_info: FunctionInfo.EvalGradHessian,
@@ -319,8 +320,8 @@ class AbstractNewtonMinimiser(
         result: RESULTS,
         accept: Bool[Array, ""],
         hessian_update_state: None,
-    ) -> _NewtonMinimiserState:
-        return _NewtonMinimiserState(
+    ) -> _QuasiNewtonState:
+        return _QuasiNewtonState(
             first_step=jnp.array(False),
             y_eval=y_eval,
             search_state=search_state,
@@ -330,6 +331,7 @@ class AbstractNewtonMinimiser(
             terminate=terminate,
             result=result,
             num_accepted_steps=old_state.num_accepted_steps + jnp.where(accept, 1, 0),
+            hessian_update_state=None,
         )
 
 
