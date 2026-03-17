@@ -13,6 +13,8 @@ import optimistix as optx
 import pytest
 
 from .helpers import (
+    _spd_minimisation_fns,
+    _uses_vanilla_cg,
     beale,
     bowl,
     finite_difference_jvp,
@@ -22,8 +24,6 @@ from .helpers import (
     matyas,
     minimisation_fn_minima_init_args,
     minimisers,
-    _spd_minimisation_fns,
-    _uses_vanilla_cg,
     tree_allclose,
 )
 
@@ -39,7 +39,11 @@ smoke_aux = (jnp.ones((2, 3)), {"smoke_aux": jnp.ones(2)})
 def test_minimise(solver, _fn, minimum, init, args, options):
     if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
         return
-    tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
+    tags = (
+        frozenset({lx.positive_semidefinite_tag})
+        if _fn in _spd_minimisation_fns
+        else frozenset()
+    )
 
     if isinstance(solver, optx.GradientDescent):
         max_steps = 100_000
@@ -79,7 +83,11 @@ def test_minimise(solver, _fn, minimum, init, args, options):
 def test_minimise_jvp(getkey, solver, _fn, minimum, init, args, options):
     if _uses_vanilla_cg(solver) and _fn not in _spd_minimisation_fns:
         return
-    tags = frozenset({lx.positive_semidefinite_tag}) if _fn in _spd_minimisation_fns else frozenset()
+    tags = (
+        frozenset({lx.positive_semidefinite_tag})
+        if _fn in _spd_minimisation_fns
+        else frozenset()
+    )
 
     if isinstance(solver, (optx.GradientDescent, optx.NonlinearCG, optx.NelderMead)):
         max_steps = 100_000
@@ -222,10 +230,14 @@ def test_optax_recompilation():
 def test_forward_minimisation(fn, y0, options, expected, solver):
     if isinstance(solver, optx.OptaxMinimiser):  # No support for forward option
         return
+    elif _uses_vanilla_cg(solver) and fn not in _spd_minimisation_fns:
+        return
     else:
-        if _uses_vanilla_cg(solver) and fn not in _spd_minimisation_fns:
-            return
-        tags = frozenset({lx.positive_semidefinite_tag}) if fn in _spd_minimisation_fns else frozenset()
+        tags = (
+            frozenset({lx.positive_semidefinite_tag})
+            if fn in _spd_minimisation_fns
+            else frozenset()
+        )
         # Many steps because gradient descent takes ridiculously long
         sol = optx.minimise(fn, solver, y0, options=options, max_steps=2**10, tags=tags)
         assert sol.result == optx.RESULTS.successful
@@ -250,5 +262,3 @@ def test_bfgs_float32():
 
     y0 = jnp.array(1.0, dtype=jnp.float32)
     optx.root_find(f, optx.BFGS(rtol=1e-3, atol=1e-6), y0)
-
-
