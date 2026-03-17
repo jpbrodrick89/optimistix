@@ -17,6 +17,7 @@ from .._misc import (
     filter_cond,
     max_norm,
     sum_squares,
+    tree_dot,
     tree_full_like,
     tree_where,
     two_norm,
@@ -132,14 +133,21 @@ class NewtonDescent(
         else:
             options = {}
         newton, result = newton_step(f_info, self.linear_solver, options)
-        # Steepest-descent fallback: when the linear solve fails (e.g. Cholesky or LU
-        # on an indefinite / near-singular Hessian), fall back to the gradient
-        # direction so the Armijo line search can still make progress.  This mirrors
-        # scipy's newton-cg behaviour on the first CG step with negative curvature.
+        # Steepest-descent fallback: when the Newton direction is not a descent
+        # direction, fall back to the gradient so the Armijo line search can still
+        # make progress.  This mirrors scipy's newton-cg behaviour on the first CG
+        # step with negative curvature.
+        #
+        # Two cases trigger the fallback:
+        #   (a) the linear solve failed outright (e.g. Cholesky on indefinite H), or
+        #   (b) the solve "succeeded" but gᵀ(H⁻¹g) ≤ 0, which happens when H is
+        #       indefinite and the solver returns a direction that ascends rather
+        #       than descends (e.g. LU on a negative-definite Hessian).
         if isinstance(f_info, FunctionInfo.EvalGradHessian):
-            failed = result != RESULTS.successful
-            newton = tree_where(failed, f_info.grad, newton)
-            result = RESULTS.where(failed, RESULTS.successful, result)
+            is_descent = tree_dot(f_info.grad, newton) > 0
+            use_fallback = (result != RESULTS.successful) | ~is_descent
+            newton = tree_where(use_fallback, f_info.grad, newton)
+            result = RESULTS.where(use_fallback, RESULTS.successful, result)
         if self.norm is not None:
             newton = (newton**ω / self.norm(newton)).ω
         return _NewtonDescentState(newton, result)
