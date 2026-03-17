@@ -74,6 +74,26 @@ In addition to the following, note that the [Optax](https://github.com/deepmind/
 
 ---
 
+??? abstract "`optimistix.AbstractNewtonMinimiser`"
+
+    ::: optimistix.AbstractNewtonMinimiser
+        options:
+            members: none
+
+::: optimistix.LineSearchNewton
+    options:
+        members:
+            - __init__
+
+---
+
+::: optimistix.TrustNewton
+    options:
+        members:
+            - __init__
+
+---
+
 ::: optimistix.OptaxMinimiser
     options:
         members:
