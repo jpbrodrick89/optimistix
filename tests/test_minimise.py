@@ -222,16 +222,14 @@ def test_optax_recompilation():
 def test_forward_minimisation(fn, y0, options, expected, solver):
     if isinstance(solver, optx.OptaxMinimiser):  # No support for forward option
         return
-    if _uses_vanilla_cg(solver) and fn not in _spd_minimisation_fns:
-        return
-    tags = frozenset({lx.positive_semidefinite_tag}) if fn in _spd_minimisation_fns else frozenset()
-    if isinstance(solver, optx.GradientDescent):
-        max_steps = 100_000
     else:
-        max_steps = 10_000
-    sol = optx.minimise(fn, solver, y0, options=options, max_steps=max_steps, tags=tags)
-    assert sol.result == optx.RESULTS.successful
-    assert tree_allclose(sol.value, expected, atol=1e-4, rtol=1e-4)
+        if _uses_vanilla_cg(solver) and fn not in _spd_minimisation_fns:
+            return
+        tags = frozenset({lx.positive_semidefinite_tag}) if fn in _spd_minimisation_fns else frozenset()
+        # Many steps because gradient descent takes ridiculously long
+        sol = optx.minimise(fn, solver, y0, options=options, max_steps=2**10, tags=tags)
+        assert sol.result == optx.RESULTS.successful
+        assert tree_allclose(sol.value, expected, atol=1e-4, rtol=1e-4)
 
 
 _golden = optx.GoldenSearch(rtol=1e-9, atol=1e-9)
